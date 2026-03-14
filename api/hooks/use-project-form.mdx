@@ -1,0 +1,189 @@
+---
+title: "useProjectForm"
+description: "Project create/edit form hook."
+---
+
+`useProjectForm` manages the state and submission logic for the project create and edit form. It builds on [`useForm`](/api/hooks/use-form) and calls [`apiCreateProject`](/api/api-service#apicreateproject-token-payload) or [`apiUpdateProject`](/api/api-service#apiupdateproject-token-id-payload) depending on whether the form is in create or edit mode.
+
+## Signature
+
+```js
+useProjectForm(token, onSuccess, setSelectedId)
+```
+
+## Source code
+
+<Accordion title="useProjectForm.js — full source">
+
+```js hooks/useProjectForm.js
+import { useState } from "react";
+import { apiCreateProject, apiUpdateProject } from "../services/api";
+import { useForm } from "./useForm";
+
+export function useProjectForm(token, onProjectCreated, setSelectedId) {
+    const validate = (values) => {
+        const errs = {};
+        if (values.name !== undefined) {
+            errs.name = values.name.trim().length < 3 ? "Minimo 3 caracteres" : null;
+        }
+        if (values.owner !== undefined) {
+            errs.owner = values.owner.trim().length < 2 ? "Owner muy corto" : null;
+        }
+        if (values.budget !== undefined) {
+            errs.budget = isNaN(Number(values.budget)) ? "Debe ser numero" : null;
+        }
+        return errs;
+    };
+
+    const [editingId, setEditingId] = useState(null);
+
+    const {
+        values,
+        errors,
+        isSubmitting: saving,
+        onChange,
+        onSubmit,
+        reset,
+        setValues
+    } = useForm({ name: "", owner: "", budget: "0", status: "active" }, validate);
+
+    const prepareEdit = (project) => {
+        setEditingId(project.id);
+        setValues({
+            name: project.name,
+            owner: project.owner,
+            budget: String(project.budget),
+            status: project.status
+        });
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    };
+
+    const cancelEdit = () => {
+        setEditingId(null);
+        reset();
+    };
+
+    const handleAction = async (formValues) => {
+        if (editingId) {
+            const updated = await apiUpdateProject({
+                token,
+                id: editingId,
+                payload: {
+                    name: formValues.name,
+                    owner: formValues.owner,
+                    budget: Number(formValues.budget),
+                    status: formValues.status
+                },
+            });
+            onProjectCreated(updated);
+            setEditingId(null);
+            reset();
+        } else {
+            const created = await apiCreateProject({
+                token,
+                payload: {
+                    name: formValues.name,
+                    owner: formValues.owner,
+                    budget: Number(formValues.budget),
+                    status: formValues.status
+                },
+            });
+            onProjectCreated(created);
+            setSelectedId(created.id);
+            reset();
+        }
+    };
+
+    return {
+        name: values.name,
+        setName: (val) => onChange("name", val),
+        owner: values.owner,
+        setOwner: (val) => onChange("owner", val),
+        budget: values.budget,
+        setBudget: (val) => onChange("budget", val),
+        status: values.status,
+        setStatus: (val) => onChange("status", val),
+        editingId,
+        saving,
+        formErr: Object.values(errors).find(e => e !== null) || null,
+        nameErr: errors.name,
+        ownerErr: errors.owner,
+        budgetErr: errors.budget,
+        onAction: (e) => onSubmit(e, handleAction),
+        prepareEdit,
+        cancelEdit,
+    };
+}
+```
+
+</Accordion>
+
+## Parameters
+
+<ParamField path="token" type="string" required>
+  The Bearer auth token forwarded to `apiCreateProject` and `apiUpdateProject`.
+</ParamField>
+
+<ParamField path="onSuccess" type="(project: Project) => void" required>
+  Callback invoked after a successful create or edit with the resulting `Project` object. In `useDashboard`, this updates `data` optimistically.
+</ParamField>
+
+<ParamField path="setSelectedId" type="(id: string) => void" required>
+  Called after a successful **create** with the new project's `id`, selecting it in the dashboard. Not called after an edit.
+</ParamField>
+
+## Return value
+
+### Field values
+
+<ResponseField name="name" type="string">Current value of the project name field.</ResponseField>
+<ResponseField name="owner" type="string">Current value of the owner field.</ResponseField>
+<ResponseField name="budget" type="string">Current value of the budget field (stored as a string to support free-form input; converted to `Number` on submit).</ResponseField>
+<ResponseField name="status" type="'active' | 'paused'">Current value of the status field.</ResponseField>
+
+### Field setters
+
+<ResponseField name="setName" type="(val: string) => void">Updates the `name` field and triggers name validation.</ResponseField>
+<ResponseField name="setOwner" type="(val: string) => void">Updates the `owner` field and triggers owner validation.</ResponseField>
+<ResponseField name="setBudget" type="(val: string) => void">Updates the `budget` field and triggers budget validation.</ResponseField>
+<ResponseField name="setStatus" type="(val: string) => void">Updates the `status` field.</ResponseField>
+
+### Form state
+
+<ResponseField name="editingId" type="string | null">
+  The `id` of the project currently being edited, or `null` when in create mode.
+</ResponseField>
+
+<ResponseField name="saving" type="boolean">
+  `true` while the API call (`apiCreateProject` or `apiUpdateProject`) is in flight.
+</ResponseField>
+
+<ResponseField name="nameErr" type="string | null">Validation error for the `name` field, or `null` if valid.</ResponseField>
+<ResponseField name="ownerErr" type="string | null">Validation error for the `owner` field, or `null` if valid.</ResponseField>
+<ResponseField name="budgetErr" type="string | null">Validation error for the `budget` field, or `null` if valid.</ResponseField>
+
+<ResponseField name="formErr" type="string | null">
+  The first non-null error across all fields, or `null` if the form is fully valid. Useful for showing a single top-level error message.
+</ResponseField>
+
+### Actions
+
+<ResponseField name="onAction" type="(e: Event) => Promise<void>">
+  Form submit handler. Delegates to `useForm`'s `onSubmit`, which validates all fields and then calls the internal `handleAction`. If `editingId` is set, calls `apiUpdateProject`; otherwise calls `apiCreateProject`.
+</ResponseField>
+
+<ResponseField name="prepareEdit" type="(project: Project) => void">
+  Enters edit mode: sets `editingId` to `project.id`, populates all fields with the project's current values, and scrolls the page to the bottom so the form is visible.
+</ResponseField>
+
+<ResponseField name="cancelEdit" type="() => void">
+  Exits edit mode: clears `editingId` and resets all fields and errors to their initial state.
+</ResponseField>
+
+## Validation rules
+
+| Field | Rule |
+|-------|------|
+| `name` | Minimum 3 characters |
+| `owner` | Minimum 2 characters |
+| `budget` | Must be a valid number (`!isNaN(Number(value))`) |

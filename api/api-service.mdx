@@ -1,0 +1,173 @@
+---
+title: "API Service"
+description: "High-level service functions for the Enterprise API."
+---
+
+The API service module exposes named async functions that map directly to Enterprise API operations. Each function delegates to [`httpClient`](/api/http-client) and forwards the caller's auth token via the `Authorization` header.
+
+## Project type
+
+```js
+// Project type
+{
+  id: string,        // e.g. "p1"
+  name: string,      // e.g. "RV4"
+  status: "active" | "paused",
+  owner: string,     // e.g. "Backend"
+  budget: number     // in PEN (soles)
+}
+```
+
+## Source code
+
+```js services/api.js
+import { httpClient } from "./httpClient";
+
+export async function apiGetDashboard({ token }) {
+    const response = await httpClient.get("/dashboard", {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    return response;
+}
+
+export async function apiCreateProject({ token, payload }) {
+    return httpClient.post("/projects", payload, {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+}
+
+export async function apiToggleProjectStatus({ token, id }) {
+    return httpClient.patch(`/projects/${id}/toggle`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+}
+
+export async function apiUpdateProject({ token, id, payload }) {
+    return httpClient.put(`/projects/${id}`, payload, {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+}
+```
+
+## Functions
+
+### `apiGetDashboard({ token })`
+
+Fetches the full dashboard payload for the authenticated user.
+
+<Note>
+  This function intentionally adds a 1000 ms artificial delay after the network response to simulate realistic API latency.
+</Note>
+
+**Parameters**
+
+<ParamField path="token" type="string" required>
+  Bearer token included in the `Authorization` header (`Bearer ${token}`).
+</ParamField>
+
+**Returns**
+
+<ResponseField name="Promise" type="Promise<object>">
+  <Expandable title="properties">
+    <ResponseField name="me" type="object">
+      The authenticated user.
+      <Expandable title="properties">
+        <ResponseField name="me.id" type="string">User ID, e.g. `"u1"`.</ResponseField>
+        <ResponseField name="me.name" type="string">Display name, e.g. `"Wilber"`.</ResponseField>
+        <ResponseField name="me.role" type="string">Role, e.g. `"admin"`.</ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="stats" type="object">
+      Aggregated business metrics.
+      <Expandable title="properties">
+        <ResponseField name="stats.revenue" type="number">Total revenue figure.</ResponseField>
+        <ResponseField name="stats.newUsers" type="number">Count of new users.</ResponseField>
+        <ResponseField name="stats.churn" type="number">Churn rate as a decimal, e.g. `0.04`.</ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="projects" type="Project[]">
+      Array of Project objects (see type definition above).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+### `apiCreateProject({ token, payload })`
+
+Creates a new project.
+
+**Parameters**
+
+<ParamField path="token" type="string" required>
+  Bearer auth token.
+</ParamField>
+
+<ParamField path="payload" type="object" required>
+  <Expandable title="properties">
+    <ParamField path="payload.name" type="string" required>Project name.</ParamField>
+    <ParamField path="payload.owner" type="string" required>Owning team, e.g. `"Backend"`.</ParamField>
+    <ParamField path="payload.budget" type="number" required>Budget in PEN (soles).</ParamField>
+    <ParamField path="payload.status" type="string" required>`"active"` or `"paused"`.</ParamField>
+  </Expandable>
+</ParamField>
+
+**Returns**
+
+<ResponseField name="Promise<Project>" type="Promise<Project>">
+  The newly created project object, including a server-generated `id` (e.g. `"p" + Date.now()`).
+</ResponseField>
+
+---
+
+### `apiToggleProjectStatus({ token, id })`
+
+Toggles a project's status between `"active"` and `"paused"`.
+
+**Parameters**
+
+<ParamField path="token" type="string" required>
+  Bearer auth token.
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  The project ID to toggle, e.g. `"p1"`.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="Promise<Project>" type="Promise<Project>">
+  The updated project object with the new status.
+</ResponseField>
+
+---
+
+### `apiUpdateProject({ token, id, payload })`
+
+Replaces a project's fields with the provided payload.
+
+**Parameters**
+
+<ParamField path="token" type="string" required>
+  Bearer auth token.
+</ParamField>
+
+<ParamField path="id" type="string" required>
+  The project ID to update.
+</ParamField>
+
+<ParamField path="payload" type="object" required>
+  <Expandable title="properties">
+    <ParamField path="payload.name" type="string">Updated project name.</ParamField>
+    <ParamField path="payload.owner" type="string">Updated owning team.</ParamField>
+    <ParamField path="payload.budget" type="number">Updated budget in PEN.</ParamField>
+    <ParamField path="payload.status" type="string">`"active"` or `"paused"`.</ParamField>
+  </Expandable>
+</ParamField>
+
+**Returns**
+
+<ResponseField name="Promise<Project>" type="Promise<Project>">
+  The updated project object.
+</ResponseField>

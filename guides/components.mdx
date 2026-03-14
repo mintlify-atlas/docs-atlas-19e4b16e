@@ -1,0 +1,792 @@
+---
+title: "UI Components"
+description: "Reference for all reusable UI components in APM Enterprise."
+---
+
+APM Enterprise provides a small set of reusable components that handle layout, data display, forms, and feedback. All components use Tailwind CSS for styling and the `cn` utility for class composition.
+
+<Tip>
+The `cn` utility at `src/utils/cn.js` combines `clsx` and `tailwind-merge`. Use it to merge conditional and overridden Tailwind classes without class conflicts:
+
+```js
+import { clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+export function cn(...inputs) {
+    return twMerge(clsx(inputs));
+}
+```
+
+Pass any mix of strings, arrays, and objects. `twMerge` resolves conflicts between Tailwind utility classes so the last-specified value wins.
+</Tip>
+
+<Note>
+The `money` formatter at `src/utils/formatters.js` formats a number as Peruvian sol currency using the browser's `Intl.NumberFormat` API:
+
+```js
+export function money(n) {
+    try {
+        return new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN" }).format(n);
+    } catch {
+        return "S/" + n;
+    }
+}
+```
+
+`ProjectList` uses `money(p.budget)` to display each project's budget as a formatted currency string (e.g. `S/ 6,000.00`).
+</Note>
+
+---
+
+## Button
+
+A styled `<button>` element with variant and size props. Accepts an optional `icon` node that renders before the label.
+
+**Props**
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `variant` | string | `"primary"` | `primary`, `secondary`, `outline`, `ghost`, `danger` |
+| `size` | string | `"md"` | `sm`, `md`, `lg` |
+| `icon` | ReactNode | — | Icon element rendered before children |
+| `className` | string | — | Additional Tailwind classes |
+| `...props` | — | — | All native `<button>` attributes |
+
+<AccordionGroup>
+  <Accordion title="Button usage examples">
+
+```jsx
+import { Button } from "../components/Button";
+import { Plus } from "lucide-react";
+
+// Primary (default)
+<Button onClick={handleSave}>Guardar Proyecto</Button>
+
+// Secondary with icon
+<Button variant="secondary" icon={<Plus size={16} />}>
+    Nuevo Proyecto
+</Button>
+
+// Ghost small
+<Button variant="ghost" size="sm">Cancelar</Button>
+
+// Danger
+<Button variant="danger">Eliminar</Button>
+
+// Disabled state
+<Button disabled={saving}>
+    {saving ? "Guardando..." : "Guardar"}
+</Button>
+```
+
+  </Accordion>
+  <Accordion title="Button source code">
+
+```jsx
+import React from "react";
+import { cn } from "../utils/cn";
+
+export function Button({
+    children,
+    variant = "primary",
+    size = "md",
+    className,
+    icon,
+    ...props
+}) {
+    const variants = {
+        primary: "bg-primary text-white shadow-lg shadow-primary/20 hover:bg-primary/90",
+        secondary: "bg-white text-obsidian border border-muted/30 hover:bg-muted/10",
+        outline: "bg-transparent border-2 border-primary text-primary hover:bg-primary/5",
+        ghost: "bg-transparent text-muted-foreground hover:bg-muted/30 hover:text-obsidian",
+        danger: "bg-red-500 text-white shadow-lg shadow-red-500/20 hover:bg-red-600",
+    };
+
+    const sizes = {
+        sm: "px-3 py-1.5 text-xs rounded-xl",
+        md: "px-5 py-2.5 text-sm rounded-2xl",
+        lg: "px-7 py-3.5 text-base rounded-3xl",
+    };
+
+    return (
+        <button
+            className={cn(
+                "inline-flex items-center justify-center gap-2 font-bold transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none",
+                variants[variant],
+                sizes[size],
+                className
+            )}
+            {...props}
+        >
+            {icon && <span className="flex-shrink-0">{icon}</span>}
+            {children}
+        </button>
+    );
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Badge
+
+An inline pill with a colored dot and label. Used throughout `ProjectList` to display project status.
+
+**Props**
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `variant` | string | `"neutral"` | `success`, `warn`, `danger`, `neutral`, `primary` |
+| `className` | string | — | Additional Tailwind classes |
+| `children` | ReactNode | — | Badge label text |
+
+<AccordionGroup>
+  <Accordion title="Badge usage examples">
+
+```jsx
+import { Badge } from "../components/Badge";
+
+// Used in ProjectList to show project status
+<Badge variant={p.status === "active" ? "success" : "warn"}>
+    {p.status === "active" ? "Activo" : "Pausado"}
+</Badge>
+
+// Other variants
+<Badge variant="danger">Crítico</Badge>
+<Badge variant="primary">Nuevo</Badge>
+<Badge variant="neutral">Pendiente</Badge>
+```
+
+  </Accordion>
+  <Accordion title="Badge source code">
+
+```jsx
+import React from "react";
+import { cn } from "../utils/cn";
+
+export function Badge({ children, variant = "neutral", className }) {
+    const variants = {
+        success: "bg-green-100 text-green-700 border-green-200",
+        warn: "bg-[#FFE88C]/50 text-[#CA732D] border-[#FFE88C]",
+        danger: "bg-red-100 text-red-700 border-red-200",
+        neutral: "bg-slate-100 text-slate-600 border-slate-200",
+        primary: "bg-primary/10 text-primary border-primary/20",
+    };
+
+    return (
+        <span className={cn(
+            "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-bold transition-all",
+            variants[variant],
+            className
+        )}>
+            <span className={cn(
+                "h-1.5 w-1.5 rounded-full bg-current opacity-80",
+            )} />
+            {children}
+        </span>
+    );
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Card
+
+A rounded container with optional glass-morphism styling.
+
+**Props**
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `variant` | string | `"default"` | `default`, `glass`, `primary` |
+| `className` | string | — | Additional Tailwind classes |
+| `children` | ReactNode | — | Card body content |
+
+<AccordionGroup>
+  <Accordion title="Card usage examples">
+
+```jsx
+import { Card } from "../components/Card";
+
+// Default card
+<Card>
+    <h2>Project Details</h2>
+    <p>Content goes here</p>
+</Card>
+
+// Glass card for overlapping backgrounds
+<Card variant="glass">
+    <p>Semi-transparent with backdrop blur</p>
+</Card>
+
+// Primary colored card
+<Card variant="primary">
+    <p>White text on primary background</p>
+</Card>
+```
+
+  </Accordion>
+  <Accordion title="Card source code">
+
+```jsx
+import React from "react";
+import { cn } from "../utils/cn";
+
+export function Card({ children, className, variant = "default" }) {
+    return (
+        <div
+            className={cn(
+                "rounded-3xl p-6 transition-all duration-300",
+                variant === "default" && "bg-white shadow-sm border border-muted/30",
+                variant === "glass" && "bg-white/60 backdrop-blur-lg border border-white/40 shadow-lg",
+                variant === "primary" && "bg-primary text-white shadow-primary/20 shadow-xl",
+                className
+            )}
+        >
+            {children}
+        </div>
+    );
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## TextField
+
+A labeled text input with inline error display and focus ring styling.
+
+**Props**
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `label` | string | — | Label text rendered above the input |
+| `value` | string | — | Controlled input value |
+| `onChange` | `(value: string) => void` | — | Called with the raw string value (not the event) |
+| `placeholder` | string | — | Input placeholder text |
+| `type` | string | `"text"` | HTML input type (`text`, `password`, `email`, etc.) |
+| `error` | string | — | Validation error message shown below the input |
+| `className` | string | — | Additional Tailwind classes on the wrapper |
+
+<Tip>
+`onChange` receives the string value directly — not the `React.ChangeEvent`. You do not need to call `e.target.value` in your handler.
+</Tip>
+
+<AccordionGroup>
+  <Accordion title="TextField usage examples">
+
+```jsx
+import { TextField } from "../components/TextField";
+
+// Basic usage with useProjectForm
+<TextField
+    label="Nombre del Proyecto"
+    value={name}
+    onChange={setName}
+    placeholder="Ej. Portal Real Estate"
+    error={nameErr}
+/>
+
+// Password field
+<TextField
+    label="Contraseña"
+    value={pass}
+    onChange={setPass}
+    type="password"
+    placeholder="••••••"
+/>
+```
+
+  </Accordion>
+  <Accordion title="TextField source code">
+
+```jsx
+import React from "react";
+import { cn } from "../utils/cn";
+
+export function TextField({ label, value, onChange, placeholder, error, className, type = "text" }) {
+    const id = `field-${label?.toLowerCase().replace(/\s+/g, '-')}`;
+
+    return (
+        <div className={cn("flex flex-col gap-2", className)}>
+            {label && (
+                <label htmlFor={id} className="text-sm font-medium text-muted-foreground px-1">
+                    {label}
+                </label>
+            )}
+            <input
+                id={id}
+                type={type}
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                placeholder={placeholder}
+                className={cn(
+                    "w-full rounded-2xl bg-white px-5 py-3 text-sm shadow-sm border-2 border-transparent transition-all outline-none",
+                    "placeholder:text-muted-foreground/60",
+                    "focus:border-primary/20 focus:ring-4 focus:ring-primary/10",
+                    error ? "border-red-500/20 bg-red-50/50 focus:ring-red-500/10" : "hover:bg-muted/10",
+                    className
+                )}
+            />
+            {error && (
+                <p className="px-2 text-xs font-bold text-red-500 animate-in fade-in slide-in-from-top-1">
+                    {error}
+                </p>
+            )}
+        </div>
+    );
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Select
+
+A custom dropdown component with a click-outside handler. Renders a styled button trigger and an animated dropdown list.
+
+**Props**
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `value` | string | — | Currently selected option value |
+| `onChange` | `(value: string) => void` | — | Called with the selected option's value |
+| `options` | `{ value: string, label: string }[]` | — | Array of selectable options |
+| `label` | string | — | Label text rendered above the trigger |
+| `className` | string | — | Additional Tailwind classes on the wrapper |
+
+<AccordionGroup>
+  <Accordion title="Select usage examples">
+
+```jsx
+import { Select } from "../components/Select";
+
+// Status filter in the projects page
+<Select
+    label="Estado"
+    value={statusFilter}
+    onChange={setStatusFilter}
+    options={[
+        { value: "all", label: "Todos" },
+        { value: "active", label: "Activo" },
+        { value: "paused", label: "Pausado" },
+    ]}
+/>
+
+// Project status field in the create form
+<Select
+    label="Estado del Proyecto"
+    value={status}
+    onChange={setStatus}
+    options={[
+        { value: "active", label: "Activo" },
+        { value: "paused", label: "Pausado" },
+    ]}
+/>
+```
+
+  </Accordion>
+  <Accordion title="Select source code">
+
+```jsx
+import React, { useState, useRef, useEffect } from "react";
+import { ChevronDown } from "lucide-react";
+import { cn } from "../utils/cn";
+
+export function Select({ value, onChange, options, label, className }) {
+    const [isOpen, setIsOpen] = useState(false);
+    const containerRef = useRef(null);
+
+    const selectedOption = options.find((opt) => opt.value === value) || options[0];
+
+    useEffect(() => {
+        function handleClickOutside(event) {
+            if (containerRef.current && !containerRef.current.contains(event.target)) {
+                setIsOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    return (
+        <div className={cn("flex flex-col gap-2.5", className)} ref={containerRef}>
+            {label && (
+                <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground px-1">
+                    {label}
+                </span>
+            )}
+            <div className="relative">
+                <button
+                    type="button"
+                    onClick={() => setIsOpen(!isOpen)}
+                    className={cn(
+                        "flex w-full items-center justify-between rounded-2xl bg-white px-6 py-4 text-sm font-bold shadow-sm ring-1 ring-muted/20 transition-all focus:ring-4 focus:ring-primary/10",
+                        isOpen && "ring-primary/30 shadow-md"
+                    )}
+                >
+                    <span className="text-obsidian tracking-wide">
+                        {selectedOption.label}
+                    </span>
+                    <ChevronDown
+                        size={16}
+                        className={cn("text-primary transition-transform duration-300", isOpen && "rotate-180")}
+                    />
+                </button>
+
+                {isOpen && (
+                    <div className="absolute top-full right-0 z-50 mt-2 min-w-full overflow-hidden rounded-2xl border border-muted/10 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+                        {options.map((option) => (
+                            <button
+                                key={option.value}
+                                type="button"
+                                onClick={() => {
+                                    onChange(option.value);
+                                    setIsOpen(false);
+                                }}
+                                className={cn(
+                                    "w-full px-4 py-4 text-center text-xs font-bold tracking-widest transition-colors",
+                                    option.value === value
+                                        ? "bg-primary text-white"
+                                        : "text-obsidian hover:bg-muted/30"
+                                )}
+                            >
+                                {option.label}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## StatCard
+
+A KPI card that displays a metric with a title, large value, optional hint badge, and an icon. Used in the dashboard stats row.
+
+**Props**
+
+| Prop | Type | Description |
+|---|---|---|
+| `title` | string | Metric label (e.g. `"Ingresos Totales"`) |
+| `value` | string | Formatted metric value (e.g. `"S/ 18,340"`) |
+| `hint` | string | Small badge text in the top-right corner |
+| `icon` | ReactNode | Icon rendered in the top-left icon box |
+| `className` | string | Additional Tailwind classes |
+
+<AccordionGroup>
+  <Accordion title="StatCard usage example">
+
+```jsx
+import { StatCard } from "../components/StatCard";
+import { DollarSign, Users, TrendingDown } from "lucide-react";
+import { money } from "../utils/formatters";
+
+<StatCard
+    title="Ingresos Totales"
+    value={money(data.stats.revenue)}
+    hint="Último ciclo"
+    icon={<DollarSign size={20} />}
+/>
+
+<StatCard
+    title="Nuevos Usuarios"
+    value={data.stats.newUsers}
+    hint="Últimos 7 días"
+    icon={<Users size={20} />}
+/>
+
+<StatCard
+    title="Churn Rate"
+    value={`${(data.stats.churn * 100).toFixed(1)}%`}
+    hint="Mensual"
+    icon={<TrendingDown size={20} />}
+/>
+```
+
+  </Accordion>
+  <Accordion title="StatCard source code">
+
+```jsx
+import React from "react";
+import { Card } from "./Card";
+import { cn } from "../utils/cn";
+
+export function StatCard({ title, value, hint, icon, className }) {
+    return (
+        <Card className={cn("group flex flex-col gap-4 overflow-hidden relative", className)}>
+            <div className="flex items-center justify-between">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-transform group-hover:scale-110">
+                    {icon}
+                </div>
+                {hint && (
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/20 px-2 py-1 rounded-lg">
+                        {hint}
+                    </span>
+                )}
+            </div>
+
+            <div>
+                <p className="text-sm font-medium text-muted-foreground">{title}</p>
+                <h3 className="mt-1 text-3xl font-black tracking-tight text-obsidian">{value}</h3>
+            </div>
+        </Card>
+    );
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## ProjectList
+
+A table component that renders a list of projects with loading skeletons and empty states. Accepts optional `onView` and `onEdit` callbacks to surface action buttons per row.
+
+**Props**
+
+| Prop | Type | Description |
+|---|---|---|
+| `projects` | array | Array of project objects to render |
+| `loading` | boolean | When `true` while `hasData` is false, shows a spinner; when `true` with data, shows skeleton rows |
+| `hasData` | boolean | Whether data has been loaded at least once |
+| `onView` | `(project) => void` | If provided, renders a "Ver" button per row |
+| `onEdit` | `(project) => void` | If provided, renders an "Editar" button per row |
+
+The component renders three states:
+- **Loading (no data)** — centered spinner with "Sincronizando..." text
+- **Empty** — centered briefcase icon with "Sin registros" text
+- **Populated** — table with skeleton rows overlaid during background refreshes
+
+<AccordionGroup>
+  <Accordion title="ProjectList usage example">
+
+```jsx
+import { ProjectList } from "../components/ProjectList";
+
+<ProjectList
+    projects={filteredProjects}
+    loading={loading}
+    hasData={!!data}
+    onView={(p) => setSelectedId(p.id)}
+    onEdit={(p) => prepareEdit(p)}
+/>
+```
+
+  </Accordion>
+  <Accordion title="ProjectList source code">
+
+```jsx
+import React from "react";
+import { Briefcase, RefreshCw, ChevronRight } from "lucide-react";
+import { Badge } from "./Badge";
+import { money } from "../utils/formatters";
+
+export function ProjectList({
+    projects,
+    loading,
+    hasData,
+    onView,
+    onEdit
+}) {
+    if (loading && !hasData) {
+        return (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                <RefreshCw size={24} className="animate-spin text-primary/40 mb-3" />
+                <p className="text-xs">Sincronizando...</p>
+            </div>
+        );
+    }
+
+    if (!loading && (!projects || projects.length === 0)) {
+        return (
+            <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                <Briefcase size={32} className="opacity-20 mb-3" />
+                <p className="text-xs">Sin registros</p>
+            </div>
+        );
+    }
+
+    // ... renders table with skeleton rows and project rows
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## ErrorModal
+
+A fixed bottom-right toast notification triggered by the error simulation system. Color-coded by HTTP status code.
+
+**Props**
+
+| Prop | Type | Description |
+|---|---|---|
+| `isOpen` | boolean | Whether the modal is visible |
+| `onClose` | `() => void` | Called when the user clicks the close button |
+| `errorCode` | number | HTTP status code that determines the color and label |
+| `message` | string | Body text shown inside the modal |
+
+**Color coding**
+
+| `errorCode` | Background | Label |
+|---|---|---|
+| `200` | Emerald | Protocolo Restablecido |
+| `401` | Violet | Acceso no Autorizado |
+| `404` | Blue | Recurso no Encontrado |
+| `500` | Red | Falla Crítica del Sistema |
+| other | Amber | Aviso de Auditoría |
+
+When `errorCode` is `200`, the modal auto-dismisses after 2.5 seconds and displays a shrinking progress bar.
+
+<AccordionGroup>
+  <Accordion title="ErrorModal usage example">
+
+```jsx
+import { ErrorModal } from "../components/ErrorModal";
+
+// In App.jsx
+<ErrorModal
+    isOpen={errorModal.isOpen}
+    onClose={() => setErrorModal({ ...errorModal, isOpen: false })}
+    errorCode={errorModal.code}
+    message={errorModal.message}
+/>
+```
+
+  </Accordion>
+  <Accordion title="ErrorModal source code">
+
+```jsx
+import React, { useEffect } from "react";
+import { AlertCircle, X, ShieldAlert, CheckCircle2, Info, Activity } from "lucide-react";
+import { cn } from "../utils/cn";
+
+export function ErrorModal({ isOpen, onClose, errorCode, message }) {
+    useEffect(() => {
+        if (isOpen && (errorCode === 200 || !errorCode)) {
+            const timer = setTimeout(() => {
+                onClose();
+            }, 2500);
+            return () => clearTimeout(timer);
+        }
+    }, [isOpen, errorCode, onClose]);
+
+    if (!isOpen) return null;
+
+    const config = {
+        500: {
+            color: "text-white",
+            bg: "bg-red-600",
+            border: "border-red-700",
+            icon: <ShieldAlert size={20} className="text-white" />,
+            label: "Falla Crítica del Sistema"
+        },
+        404: {
+            color: "text-white",
+            bg: "bg-blue-600",
+            border: "border-blue-700",
+            icon: <Info size={20} className="text-white" />,
+            label: "Recurso no Encontrado"
+        },
+        200: {
+            color: "text-white",
+            bg: "bg-emerald-500",
+            border: "border-emerald-600",
+            icon: <CheckCircle2 size={20} className="text-white" />,
+            label: "Protocolo Restablecido"
+        },
+        401: {
+            color: "text-white",
+            bg: "bg-violet-600",
+            border: "border-violet-700",
+            icon: <ShieldAlert size={20} className="text-white" />,
+            label: "Acceso no Autorizado"
+        },
+        default: {
+            color: "text-white",
+            bg: "bg-amber-500",
+            border: "border-amber-600",
+            icon: <Activity size={20} className="text-white" />,
+            label: "Aviso de Auditoría"
+        }
+    };
+
+    const current = config[errorCode] || config.default;
+
+    return (
+        <div className="fixed bottom-8 right-8 z-[100] animate-in slide-in-from-right-10 fade-in duration-500">
+            <div className={cn(
+                "group relative overflow-hidden rounded-2xl p-5 shadow-2xl border min-w-[300px] max-w-sm",
+                current.bg,
+                current.border
+            )}>
+                {/* ... icon, label, message, close button */}
+            </div>
+        </div>
+    );
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Layout
+
+The root application shell. Renders the sidebar, sticky header, and main content area. Manages sidebar collapse state and the engineering panel visibility internally.
+
+**Props**
+
+| Prop | Type | Description |
+|---|---|---|
+| `children` | ReactNode | Page content rendered in the main area |
+| `user` | `{ name, role }` | Used to render the user's name and translated role in the header |
+| `activeTab` | string | Currently active navigation tab key |
+| `setTab` | `(tab: string) => void` | Called when a sidebar nav item is clicked |
+
+**Features**
+
+- **Collapsible sidebar** — a toggle button at the bottom of the sidebar collapses it to icon-only mode (`w-20`). Tooltip labels appear on hover in collapsed mode.
+- **Sticky header** — the top bar stays fixed while the main content scrolls. It shows the current user's name and a generated avatar from DiceBear.
+- **Engineering panel** — the **Control de Red** section is rendered only when the sidebar is expanded (`!isCollapsed`). It exposes three error injection buttons and a restore button that call `window.setSimulatedError`.
+- **Tab navigation** — clicking Dashboard, Proyectos, or Usuarios calls `setTab`, which `App.jsx` uses to conditionally render the corresponding page component.
+
+<AccordionGroup>
+  <Accordion title="Layout usage example">
+
+```jsx
+import { Layout } from "./components/Layout";
+
+// In App.jsx
+const user = { name: "Ing. Wilber", role: "Engineering Lead" };
+
+<Layout user={user} activeTab={activeTab} setTab={setActiveTab}>
+    {activeTab === 'dashboard' && <DashboardPage />}
+    {activeTab === 'projects' && <ProjectsPage />}
+    {activeTab === 'users' && <UsersPage />}
+</Layout>
+```
+
+  </Accordion>
+</AccordionGroup>

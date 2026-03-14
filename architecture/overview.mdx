@@ -1,0 +1,116 @@
+---
+title: "Architecture Overview"
+description: "High-level system design of APM Enterprise — how the application is structured, why it is structured that way, and where each concern lives."
+---
+
+## Design philosophy
+
+APM Enterprise is built on a strict **Separation of Concerns (SoC)** pattern. Every file in the codebase belongs to exactly one of three layers — Presentation, Business Logic, or Data/Infrastructure — and is never allowed to reach across two layers at once.
+
+This was chosen for three concrete reasons:
+
+1. **Testability** — each layer can be exercised in isolation. Hooks never import React components; service functions never import hooks.
+2. **Replaceability** — the mock server (`mockServer.js`) intercepts `window.fetch` at the infrastructure layer. Replacing it with a real backend requires no changes above the `services/` directory.
+3. **Predictable data flow** — data moves in one direction: Infrastructure → Business Logic → Presentation. The only upward signal is a global `CustomEvent` used for error broadcasting (see [Data Flow](/architecture/data-flow)).
+
+## System layers
+
+The application is divided into three distinct layers.
+
+| Layer | Responsibility | Key files |
+| --- | --- | --- |
+| **Presentation (UI)** | Render data, capture user input, delegate to hooks | `pages/`, `components/`, `App.jsx` |
+| **Business Logic** | Async state, form validation, derived data via `useMemo` | `hooks/` |
+| **Data / Infrastructure** | HTTP transport, API contracts, fake database | `services/` |
+
+Pages receive everything they need from a hook and never call `fetch` or a service function directly. Hooks compose other hooks and call service functions but never import components. Service functions call `httpClient` and nothing else.
+
+## Directory structure
+
+```
+src/
+├── App.jsx               # Root component — tab routing, error modal, event listener
+├── main.jsx              # React DOM entry point — also imports mockServer
+│
+├── pages/                # Route-level page components
+│   ├── DashboardPage.jsx
+│   ├── ProjectsPage.jsx
+│   └── UsersPage.jsx
+│
+├── components/           # Reusable atomic UI components
+│   ├── Badge.jsx
+│   ├── Button.jsx
+│   ├── Card.jsx
+│   ├── ErrorModal.jsx
+│   ├── Layout.jsx
+│   ├── ProjectList.jsx
+│   ├── Select.jsx
+│   ├── StatCard.jsx
+│   ├── TextField.jsx
+│   └── Tooltip.jsx
+│
+├── hooks/                # Custom hooks — all business logic lives here
+│   ├── useDashboard.js
+│   ├── useFetch.js
+│   ├── useForm.js
+│   ├── useProjectForm.js
+│   └── useUsers.js
+│
+├── services/             # HTTP client, API service functions, mock server
+│   ├── api.js
+│   ├── apiClient.js
+│   ├── httpClient.js
+│   └── mockServer.js
+│
+└── utils/                # Pure utility functions
+    ├── cn.js             # Tailwind class merging (clsx + tailwind-merge)
+    └── formatters.js     # Currency and number formatters (money())
+```
+
+**`pages/`** — One file per application route. Each page component imports a single domain hook and a set of atomic components. It contains only JSX and wiring; no business logic.
+
+**`components/`** — Stateless or minimally stateful UI primitives. They accept props and render markup. They have no knowledge of API calls, routing, or application state.
+
+**`hooks/`** — Every piece of business logic: data fetching, form handling, filtering, authentication state. Hooks compose other hooks and call service functions.
+
+**`services/`** — Three distinct concerns in one directory: `httpClient.js` is the low-level transport, `api.js` defines the APM Enterprise API contract, `apiClient.js` calls JSONPlaceholder, and `mockServer.js` intercepts all network traffic for local development.
+
+**`utils/`** — Pure functions with no side effects. `cn()` merges Tailwind class strings safely. `money()` formats numbers as currency strings.
+
+## Technology decisions
+
+| Technology | Version | Rationale |
+| --- | --- | --- |
+| **React** | 18.2 | Component model and hooks API provide the primitives for the three-layer architecture |
+| **Vite** | 5.2 | Sub-second HMR, native ESM, minimal configuration (`vite.config.js` is five lines) |
+| **Tailwind CSS** | 4.2 | Utility classes keep styling co-located with markup; no separate CSS files to maintain |
+| **Lucide React** | 0.577 | Consistent icon set with tree-shakeable named exports; no icon font payload |
+| **clsx + tailwind-merge** | — | `cn()` utility combines conditional class logic with Tailwind deduplication |
+| **Custom fetch layer** | — | `httpClient.js` centralises auth header injection and error normalisation instead of adding an HTTP library dependency |
+| **@radix-ui/react-slot** | 1.2 | Headless slot primitive used by the `Button` component for polymorphic rendering |
+
+## Navigation pattern
+
+APM Enterprise uses **tab-based SPA routing** driven by an `activeTab` string in `App.jsx` — not React Router or any browser history API.
+
+```jsx
+// src/App.jsx
+const [activeTab, setActiveTab] = useState('dashboard');
+
+// ...
+
+<Layout user={user} activeTab={activeTab} setTab={setActiveTab}>
+    {activeTab === 'dashboard' && <DashboardPage />}
+    {activeTab === 'projects' && <ProjectsPage />}
+    {activeTab === 'users' && <UsersPage onError={handleError} />}
+    {activeTab === 'config' && ( /* placeholder */ )}
+</Layout>
+```
+
+`Layout.jsx` renders the sidebar and passes `setTab` down to each `NavItem` button. Clicking a nav item calls `setTab` with the new tab name, which triggers a React re-render that conditionally mounts the correct page.
+
+This approach was chosen because the application is a single-screen dashboard. There are no deep-linkable URLs, no back/forward navigation requirements, and no need for code-splitting by route. Adding React Router would introduce history management complexity with no user-visible benefit for this use case.
+
+<Note>
+The `config` tab renders a placeholder — the configuration module is not yet implemented.
+</Note>

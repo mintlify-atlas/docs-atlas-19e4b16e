@@ -1,0 +1,200 @@
+---
+title: "httpClient"
+description: "Centralized HTTP client for all Enterprise API calls."
+---
+
+The `httpClient` module provides a single, consistent interface for every HTTP request made to the APM Enterprise API. It centralizes auth headers, base URL construction, and error normalization so individual service functions never have to repeat that logic.
+
+<Info>
+  In development, all requests to `api.apm-enterprise.com` are intercepted by [mockServer.js](/api/mock-server) before they reach the network.
+</Info>
+
+## Base URL
+
+```js
+const BASE_URL = "https://api.apm-enterprise.com/v1";
+```
+
+Every method prepends `BASE_URL` to the `endpoint` argument, so callers only pass the path (e.g. `"/dashboard"`).
+
+## Default headers
+
+All requests include `Content-Type: application/json` and an `Authorization: Bearer demo-token` header. Per-call headers are merged on top via the `options.headers` argument.
+
+## Error handling — `handleResponse`
+
+All responses pass through the internal `handleResponse` function:
+
+- If `response.ok` is `true`, the body is parsed as JSON and returned.
+- If `response.ok` is `false`, the body is attempted to be parsed as JSON to extract a `message`. A plain `Error` is thrown with two extra properties:
+  - `error.status` — the HTTP status code (e.g. `401`, `500`)
+  - `error.message` — the server error message, or `"Error de comunicación con el servidor"` as a fallback
+
+## Source code
+
+```js services/httpClient.js
+const BASE_URL = "https://api.apm-enterprise.com/v1";
+
+async function handleResponse(response) {
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const error = new Error(errorData.message || "Error de comunicación con el servidor");
+        error.status = response.status;
+        throw error;
+    }
+    return response.json();
+}
+
+const getHeaders = (extraHeaders = {}) => ({
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer demo-token',
+    ...extraHeaders,
+});
+
+export const httpClient = {
+    async get(endpoint, options = {}) {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'GET',
+            headers: getHeaders(options.headers),
+        });
+        return handleResponse(response);
+    },
+
+    async post(endpoint, data, options = {}) {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'POST',
+            headers: getHeaders(options.headers),
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+
+    async put(endpoint, data, options = {}) {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'PUT',
+            headers: getHeaders(options.headers),
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+
+    async patch(endpoint, data, options = {}) {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'PATCH',
+            headers: getHeaders(options.headers),
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+
+    async delete(endpoint, options = {}) {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'DELETE',
+            headers: getHeaders(options.headers),
+        });
+        return handleResponse(response);
+    }
+};
+```
+
+## Methods
+
+### `httpClient.get(endpoint, options)`
+
+Sends a `GET` request.
+
+<ParamField path="endpoint" type="string" required>
+  Path appended to `BASE_URL`. For example, `"/dashboard"` resolves to `https://api.apm-enterprise.com/v1/dashboard`.
+</ParamField>
+
+<ParamField path="options.headers" type="object">
+  Additional headers merged on top of the default auth headers.
+</ParamField>
+
+<ResponseField name="Promise<any>" type="Promise<any>">
+  Resolves with the parsed JSON response body. Throws an `Error` with `.status` and `.message` on non-2xx responses.
+</ResponseField>
+
+---
+
+### `httpClient.post(endpoint, data, options)`
+
+Sends a `POST` request with a JSON body.
+
+<ParamField path="endpoint" type="string" required>
+  Path appended to `BASE_URL`.
+</ParamField>
+
+<ParamField path="data" type="object" required>
+  Request payload. Serialized to JSON and sent as the request body.
+</ParamField>
+
+<ParamField path="options.headers" type="object">
+  Additional headers merged with default auth headers.
+</ParamField>
+
+<ResponseField name="Promise<any>" type="Promise<any>">
+  Resolves with the parsed JSON response body.
+</ResponseField>
+
+---
+
+### `httpClient.put(endpoint, data, options)`
+
+Sends a `PUT` request with a JSON body. Same parameter shape as `post`.
+
+<ParamField path="endpoint" type="string" required>
+  Path appended to `BASE_URL`.
+</ParamField>
+
+<ParamField path="data" type="object" required>
+  Full replacement payload serialized to JSON.
+</ParamField>
+
+<ParamField path="options.headers" type="object">
+  Additional headers merged with default auth headers.
+</ParamField>
+
+<ResponseField name="Promise<any>" type="Promise<any>">
+  Resolves with the parsed JSON response body.
+</ResponseField>
+
+---
+
+### `httpClient.patch(endpoint, data, options)`
+
+Sends a `PATCH` request with a JSON body. Same parameter shape as `post`.
+
+<ParamField path="endpoint" type="string" required>
+  Path appended to `BASE_URL`.
+</ParamField>
+
+<ParamField path="data" type="object" required>
+  Partial update payload serialized to JSON.
+</ParamField>
+
+<ParamField path="options.headers" type="object">
+  Additional headers merged with default auth headers.
+</ParamField>
+
+<ResponseField name="Promise<any>" type="Promise<any>">
+  Resolves with the parsed JSON response body.
+</ResponseField>
+
+---
+
+### `httpClient.delete(endpoint, options)`
+
+Sends a `DELETE` request. No body is included.
+
+<ParamField path="endpoint" type="string" required>
+  Path appended to `BASE_URL`.
+</ParamField>
+
+<ParamField path="options.headers" type="object">
+  Additional headers merged with default auth headers.
+</ParamField>
+
+<ResponseField name="Promise<any>" type="Promise<any>">
+  Resolves with the parsed JSON response body.
+</ResponseField>

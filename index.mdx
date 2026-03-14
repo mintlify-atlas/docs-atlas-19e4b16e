@@ -1,97 +1,102 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "APM Enterprise"
+description: "Enterprise-grade business management system for project tracking, KPI monitoring, and team oversight — built with React and a layered architecture."
 ---
 
-## Setting up
-
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get the dashboard running locally in under five minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Dashboard Module" icon="chart-line" href="/modules/dashboard">
+    Explore KPI stats, project listings, and the login flow.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Architecture Overview" icon="layer-group" href="/architecture/overview">
+    Understand the three-layer separation-of-concerns design.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/http-client">
+    Full reference for services, hooks, and the HTTP client.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What is APM Enterprise?
 
-Everything you need to create world-class documentation.
+APM Enterprise is a React-based management dashboard designed for engineering teams. It provides real-time KPI tracking, project portfolio management, and a user directory — all backed by a centralized HTTP client with Bearer token authentication and a built-in mock server for local development.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Info>
+  APM Enterprise uses a **Separation of Concerns (SoC)** architecture that cleanly separates the presentation layer (pages and components), business logic layer (custom hooks), and data layer (services and HTTP client).
+</Info>
 
-## Need inspiration?
+## Core modules
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={3}>
+  <Card title="Dashboard" icon="gauge" href="/modules/dashboard">
+    Real-time revenue, user, and churn KPIs with a project listing and inline create/edit form.
+  </Card>
+  <Card title="Projects" icon="briefcase" href="/modules/projects">
+    Full project inventory with status filtering, pagination, detail view, and CRUD operations.
+  </Card>
+  <Card title="Users" icon="users" href="/modules/users">
+    User directory with profile inspection, audit trail, and deep-link post and comment traceability.
+  </Card>
+</CardGroup>
+
+## Key features
+
+<AccordionGroup>
+  <Accordion title="KPI dashboard with live data sync">
+    The dashboard displays total revenue, new users (last 7 days), and churn rate. Data is fetched from the Enterprise API via `apiGetDashboard` and automatically re-fetches when an `apm:api_status` event fires — ensuring the UI stays in sync after any error simulation or restore.
+  </Accordion>
+  <Accordion title="Project management with CRUD">
+    Create new projects with name, owner, budget, and status. Edit existing projects inline. Filter by status (active / paused) and browse pages. All mutations go through the centralized `httpClient` with Bearer auth.
+  </Accordion>
+  <Accordion title="User directory with audit traceability">
+    Lists users from JSONPlaceholder with paginated table view. Selecting a user triggers deep audit logging in the browser console — fetching their posts and top comments to demonstrate network traceability.
+  </Accordion>
+  <Accordion title="API engineering panel with error simulation">
+    The sidebar contains a hidden engineering panel that lets you inject HTTP error codes (401, 404, 500) globally using `window.setSimulatedError(code)`. The app reacts immediately — clearing data, showing error modals, and restoring on 200.
+  </Accordion>
+  <Accordion title="Layered, maintainable architecture">
+    Pages consume custom hooks (`useDashboard`, `useProjectForm`, `useUsers`) that abstract all async state. Hooks call service functions that use `httpClient`. No page component ever calls `fetch` directly.
+  </Accordion>
+</AccordionGroup>
+
+## Technology stack
+
+| Layer | Technology |
+|---|---|
+| UI Framework | React 18 |
+| Build Tool | Vite 5 |
+| Styling | Tailwind CSS v4 |
+| Icons | Lucide React |
+| HTTP | Native `fetch` via centralized `httpClient` |
+| State | React hooks (`useState`, `useMemo`, `useEffect`) |
+| Mock API | Custom `mockServer.js` fetch interceptor |
+
+## Getting started
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/CHANKUN5/APM.git
+    cd APM
+    ```
+  </Step>
+  <Step title="Install dependencies">
+    ```bash npm
+    npm install
+    ```
+  </Step>
+  <Step title="Start the development server">
+    ```bash
+    npm run dev
+    ```
+    Open [http://localhost:5173](http://localhost:5173) in your browser.
+  </Step>
+  <Step title="Log in to the dashboard">
+    Use the demo credentials pre-filled on the login screen:
+    - **Email:** `admin@demo.com`
+    - **Password:** `123456`
+
+    Click **Iniciar Protocolo** to access the dashboard.
+  </Step>
+</Steps>

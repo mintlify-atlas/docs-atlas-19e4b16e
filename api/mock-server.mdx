@@ -1,0 +1,214 @@
+---
+title: "Mock Server"
+description: "Development fetch interceptor that simulates the Enterprise API."
+---
+
+<Warning>
+  The mock server is for **development and demo use only**. It replaces `window.fetch` globally at module load time. This module must not be loaded in a production build.
+</Warning>
+
+When `mockServer.js` is imported, it immediately patches `window.fetch`. Any subsequent call to `fetch()` anywhere in the application is intercepted and routed through the mock's logic before (potentially) reaching the real network.
+
+## Source code
+
+```js services/mockServer.js
+const fakeDb = {
+    me: { id: "u1", name: "Wilber", role: "admin" },
+    stats: { revenue: 18340, newUsers: 27, churn: 0.04 },
+    projects: [
+        { id: "p1", name: "RV4", status: "active", owner: "Backend", budget: 6000 },
+        { id: "p2", name: "Portal Real Estate", status: "paused", owner: "Frontend", budget: 4500 },
+        { id: "p3", name: "ReflexoPeru", status: "active", owner: "Fullstack", budget: 7800 },
+        { id: "p4", name: "Agentes IA", status: "paused", owner: "IA", budget: 2500 },
+    ],
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+window.SIMULATE_ERROR = null;
+
+const originalFetch = window.fetch;
+
+window.fetch = async (url, options = {}) => {
+    const isEnterpriseApi = url?.includes?.("api.apm-enterprise.com");
+    const isExternalAudit = url?.includes?.("jsonplaceholder");
+    const { method = "GET", headers, body } = options;
+
+    let authHeader;
+    if (headers instanceof Headers) {
+        authHeader = headers.get("Authorization") || headers.get("authorization");
+    } else {
+        authHeader = headers?.["Authorization"] || headers?.["authorization"];
+    }
+    const token = authHeader?.split(" ")[1];
+
+    if (!isEnterpriseApi && !isExternalAudit) {
+        return Promise.resolve(
+            new Response(JSON.stringify({ success: true }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            })
+        );
+    }
+
+    console.group(`📡 APM Network: ${method} ${url}`);
+
+    if (window.SIMULATE_ERROR) {
+        await sleep(500);
+        const errCode = window.SIMULATE_ERROR;
+        console.error(`🚨 Anomalía Detectada: ${errCode}`);
+        console.groupEnd();
+        return new Response(JSON.stringify({ error: true, status: errCode, message: "Falla de Auditoría del Sistema" }), {
+            status: errCode,
+            headers: { "Content-Type": "application/json" },
+        });
+    }
+
+    if (isEnterpriseApi && (!token || token !== "demo-token")) {
+        console.warn(`⚠️ Seguridad Enterprise: Token Inválido o Ausente (${token})`);
+        console.groupEnd();
+        return new Response(JSON.stringify({ error: "No autorizado" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+        });
+    }
+
+    let response;
+
+    try {
+        if (url.includes("/dashboard") && method === "GET") {
+            const data = { me: fakeDb.me, stats: fakeDb.stats, projects: fakeDb.projects };
+            console.log("📦 Portafolio Sync:");
+            console.table(data.projects);
+            response = new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
+        } else if (url.includes("/projects") && method === "POST") {
+            const payload = JSON.parse(body);
+            const newItem = { id: "p" + Date.now(), ...payload, status: "active" };
+            fakeDb.projects = [newItem, ...fakeDb.projects];
+            console.log("✅ Activo Vinculado:");
+            console.table([newItem]);
+            response = new Response(JSON.stringify(newItem), { status: 201, headers: { "Content-Type": "application/json" } });
+        } else {
+            const realRes = await originalFetch(url, options);
+            if (isExternalAudit) {
+                const clone = realRes.clone();
+                try {
+                    const jsonData = await clone.json();
+                    console.log("📋 Auditoría Externa:");
+                    console.table(jsonData.slice(0, 5));
+                } catch (e) { }
+            }
+            console.groupEnd();
+            return realRes;
+        }
+    } catch (e) {
+        console.error("❌ Fallo Crítico en Interceptor:", e);
+        console.groupEnd();
+        return new Response(JSON.stringify({ error: true, message: "Error interno del servidor simulado" }), { status: 500 });
+    }
+
+    console.groupEnd();
+    return response;
+};
+
+window.setSimulatedError = (code) => {
+    window.SIMULATE_ERROR = code;
+    const msg = code ? `Inyección código ${code}` : "Restaurado Protocolo 200";
+    console.log(`🛠️ Control API: ${msg}`);
+
+    const event = new CustomEvent("apm:api_status", { detail: { code: code || 200, message: msg } });
+    window.dispatchEvent(event);
+};
+```
+
+## How it works
+
+When the module is first imported, it saves a reference to the original `window.fetch` as `originalFetch`, then replaces `window.fetch` with a custom async function. Every subsequent `fetch()` call in the application — including calls from `httpClient` and `apiClient` — goes through this interceptor first.
+
+The interceptor checks the URL to decide what to do:
+
+- **`api.apm-enterprise.com`** — handled entirely in memory by the mock (auth check + route matching).
+- **`jsonplaceholder.typicode.com`** — passed through to `originalFetch`, but the response is cloned and logged to the console.
+- **All other URLs** — returned immediately with a synthetic `{ success: true }` response.
+
+## `fakeDb` — in-memory database
+
+The mock stores its state in a module-level `fakeDb` object. This object is mutated directly on write operations (e.g. creating a project) and persists for the lifetime of the page.
+
+```js
+const fakeDb = {
+  me:     { id: "u1", name: "Wilber", role: "admin" },
+  stats:  { revenue: 18340, newUsers: 27, churn: 0.04 },
+  projects: [
+    { id: "p1", name: "RV4",               status: "active", owner: "Backend",  budget: 6000 },
+    { id: "p2", name: "Portal Real Estate", status: "paused", owner: "Frontend", budget: 4500 },
+    { id: "p3", name: "ReflexoPeru",        status: "active", owner: "Fullstack", budget: 7800 },
+    { id: "p4", name: "Agentes IA",         status: "paused", owner: "IA",        budget: 2500 },
+  ],
+};
+```
+
+## Intercepted routes
+
+<AccordionGroup>
+  <Accordion title="GET /dashboard">
+    Returns the full `fakeDb` object — `me`, `stats`, and `projects` — as a 200 JSON response. The projects array is logged to the console via `console.table`.
+  </Accordion>
+  <Accordion title="POST /projects">
+    Parses the request body, generates a new `id` using `"p" + Date.now()`, forces `status` to `"active"`, prepends the new item to `fakeDb.projects`, and returns the new project as a 201 response.
+  </Accordion>
+  <Accordion title="All other routes">
+    Unrecognized routes are forwarded to `originalFetch`. If the URL is a JSONPlaceholder URL, the first 5 rows of the response are previewed in the console. The real response is returned unchanged.
+  </Accordion>
+</AccordionGroup>
+
+## Auth validation
+
+For any request to `api.apm-enterprise.com`, the interceptor extracts the `Authorization` header (supporting both plain object headers and `Headers` instances) and compares the token against the string `"demo-token"`.
+
+If the token is missing or does not match:
+- A `401` response with `{ error: "No autorizado" }` is returned immediately.
+- A warning is logged: `⚠️ Seguridad Enterprise: Token Inválido o Ausente`.
+
+## Error simulation
+
+The interceptor checks `window.SIMULATE_ERROR` before processing any Enterprise API request. If the value is set to a non-null status code:
+
+1. The interceptor sleeps for 500 ms.
+2. Returns a response with the given status code and `{ error: true, message: "Falla de Auditoría del Sistema" }`.
+3. Logs the error code to the console.
+
+This allows any component to observe realistic error states without requiring backend changes.
+
+## Global API
+
+Two globals are exposed for use in the browser console or test harnesses:
+
+<ResponseField name="window.SIMULATE_ERROR" type="number | null">
+  When set to a numeric HTTP status code (e.g. `500`, `401`), every subsequent intercepted Enterprise API request will fail with that code. Set to `null` to restore normal behavior.
+</ResponseField>
+
+<ResponseField name="window.setSimulatedError(code)" type="function">
+  Helper to set `window.SIMULATE_ERROR`. Also dispatches an `apm:api_status` CustomEvent on `window`, which triggers [`useFetch`](/api/hooks/use-fetch) hooks to re-execute. Pass `null` or `0` to clear the error.
+
+  ```js
+  // Simulate a 500 error
+  window.setSimulatedError(500);
+
+  // Restore normal responses
+  window.setSimulatedError(null);
+  ```
+</ResponseField>
+
+## Console logging
+
+Every intercepted request is wrapped in a `console.group` labeled `📡 APM Network: {METHOD} {URL}`. Within the group, different emoji prefixes indicate the outcome:
+
+| Prefix | Meaning |
+|--------|---------|
+| `📦 Portafolio Sync:` | Successful GET /dashboard |
+| `✅ Activo Vinculado:` | Successful POST /projects |
+| `📋 Auditoría Externa:` | JSONPlaceholder passthrough (first 5 rows shown) |
+| `🚨 Anomalía Detectada:` | Simulated error triggered |
+| `⚠️ Seguridad Enterprise:` | Invalid or missing auth token |
+| `❌ Fallo Crítico en Interceptor:` | Unexpected exception inside the interceptor |

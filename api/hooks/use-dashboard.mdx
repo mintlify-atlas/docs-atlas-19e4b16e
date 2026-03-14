@@ -1,0 +1,189 @@
+---
+title: "useDashboard"
+description: "Dashboard state hook composing auth, data fetching, and project filtering."
+---
+
+`useDashboard` is the top-level state hook for the main dashboard view. It composes [`useFetch`](/api/hooks/use-fetch) for data loading, manages auth credentials, and exposes memoized derived state for project filtering and selection.
+
+## Signature
+
+```js
+useDashboard()
+```
+
+## Source code
+
+<Accordion title="useDashboard.js — full source">
+
+```js hooks/useDashboard.js
+import { useState, useMemo } from "react";
+import { apiGetDashboard, apiToggleProjectStatus } from "../services/api";
+import { useFetch } from "./useFetch";
+
+export function useDashboard() {
+    const [token, setToken] = useState("demo-token");
+    const [email, setEmail] = useState("admin@demo.com");
+    const [pass, setPass] = useState("123456");
+
+    const [q, setQ] = useState("");
+    const [statusFilter, setStatusFilter] = useState("all");
+    const [selectedId, setSelectedId] = useState(null);
+
+    const {
+        data,
+        loading,
+        error: err,
+        execute: load,
+        setData,
+        setError: setErr
+    } = useFetch(() => apiGetDashboard({ token }), !!token, [token]);
+
+    const filteredProjects = useMemo(() => {
+        const items = data?.projects || [];
+        return items
+            .filter((p) => (statusFilter === "all" ? true : p.status === statusFilter))
+            .filter((p) => (q.trim() ? p.name.toLowerCase().includes(q.trim().toLowerCase()) : true));
+    }, [data, q, statusFilter]);
+
+    const selected = useMemo(() => {
+        if (!data?.projects || !selectedId) return null;
+        return data.projects.find((p) => p.id === selectedId) || null;
+    }, [data, selectedId]);
+
+    function onLogin(e) {
+        e.preventDefault();
+        if (!email.includes("@") || pass.length < 3) {
+            alert("Credenciales inválidas (simulado)");
+            return;
+        }
+        setToken("demo-token");
+    }
+
+    function onLogout() {
+        setToken("");
+        setData(null);
+    }
+
+    return {
+        token,
+        email,
+        setEmail,
+        pass,
+        setPass,
+        data,
+        setData,
+        loading,
+        err,
+        setErr,
+        q,
+        setQ,
+        statusFilter,
+        setStatusFilter,
+        selectedId,
+        setSelectedId,
+        filteredProjects,
+        selected,
+        load,
+        onLogin,
+        onLogout,
+    };
+}
+```
+
+</Accordion>
+
+## Return value
+
+### Auth state
+
+<ResponseField name="token" type="string">
+  The current Bearer token. Initialized to `"demo-token"`. Set to an empty string on logout.
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  Controlled input value for the login email field.
+</ResponseField>
+
+<ResponseField name="setEmail" type="React.Dispatch<string>">
+  Setter for `email`.
+</ResponseField>
+
+<ResponseField name="pass" type="string">
+  Controlled input value for the login password field.
+</ResponseField>
+
+<ResponseField name="setPass" type="React.Dispatch<string>">
+  Setter for `pass`.
+</ResponseField>
+
+### Data state
+
+<ResponseField name="data" type="{ me: object, stats: object, projects: Project[] } | null">
+  The full dashboard payload returned by `apiGetDashboard`. `null` before the first successful load or after logout.
+</ResponseField>
+
+<ResponseField name="setData" type="React.Dispatch">
+  Direct setter for `data`. Used for optimistic updates — for example, updating the local project list immediately after a create or edit without waiting for a refetch.
+</ResponseField>
+
+<ResponseField name="loading" type="boolean">
+  `true` while the dashboard fetch is in flight.
+</ResponseField>
+
+<ResponseField name="err" type="{ message: string, status: number } | null">
+  The current fetch error, or `null` if no error.
+</ResponseField>
+
+<ResponseField name="setErr" type="React.Dispatch">
+  Direct setter for `err`. Use to clear the error banner after the user dismisses it.
+</ResponseField>
+
+### Filter state
+
+<ResponseField name="q" type="string">
+  The current free-text search query for filtering projects by name.
+</ResponseField>
+
+<ResponseField name="setQ" type="React.Dispatch<string>">
+  Setter for the search query `q`.
+</ResponseField>
+
+<ResponseField name="statusFilter" type="'all' | 'active' | 'paused'">
+  The current status filter. Defaults to `"all"`.
+</ResponseField>
+
+<ResponseField name="setStatusFilter" type="React.Dispatch<string>">
+  Setter for `statusFilter`.
+</ResponseField>
+
+<ResponseField name="selectedId" type="string | null">
+  The `id` of the currently selected project, or `null` if none is selected.
+</ResponseField>
+
+<ResponseField name="setSelectedId" type="React.Dispatch<string | null>">
+  Setter for `selectedId`.
+</ResponseField>
+
+### Derived / memoized state
+
+<ResponseField name="filteredProjects" type="Project[]">
+  A memoized array of projects derived from `data.projects`. Filtered first by `statusFilter`, then by the search query `q` (case-insensitive name match). Recalculates when `data`, `q`, or `statusFilter` change.
+</ResponseField>
+
+<ResponseField name="selected" type="Project | null">
+  A memoized lookup that finds the project in `data.projects` whose `id` matches `selectedId`. Returns `null` if no match or if `selectedId` is `null`.
+</ResponseField>
+
+### Actions
+
+<ResponseField name="load" type="() => Promise<void>">
+  Manually re-triggers the dashboard fetch (the `execute` function from `useFetch`).
+</ResponseField>
+
+<ResponseField name="onLogin" type="(e: Event) => void">
+  Login form submit handler. Calls `e.preventDefault()`, validates that `email` contains `@` and `pass` is at least 3 characters, then sets `token` to `"demo-token"`. Invalid credentials show a browser `alert`.
+</ResponseField>
+
+<ResponseField name="onLogout" type="() => void">
+  Clears `token` (sets it to `""`) and sets `data` to `null`, effectively ending the session and stopping auto-fetch.
+</ResponseField>

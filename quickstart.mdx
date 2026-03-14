@@ -1,80 +1,142 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get APM Enterprise running locally in under five minutes."
 ---
 
-## Get started in three steps
+<Tip>
+  APM Enterprise runs entirely in demo mode. The mock server intercepts all HTTP calls to `api.apm-enterprise.com` — no real backend or network connection is required.
+</Tip>
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+- **Node.js** 18 or higher
+- **npm**, **yarn**, or **pnpm**
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+## Installation
 
-### Step 2: Deploy your changes
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/CHANKUN5/APM.git
+    cd APM
+    ```
+  </Step>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+  <Step title="Install dependencies">
+    <CodeGroup>
+      ```bash npm
+      npm install
+      ```
+      ```bash yarn
+      yarn install
+      ```
+      ```bash pnpm
+      pnpm install
+      ```
+    </CodeGroup>
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Start the development server">
+    ```bash
+    npm run dev
+    ```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    Vite starts the dev server. Open [http://localhost:5173](http://localhost:5173) in your browser.
+  </Step>
 
-### Step 3: Go live
+  <Step title="Log in to the dashboard">
+    The app opens on the login screen. Use the pre-filled demo credentials:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    - **Email:** `admin@demo.com`
+    - **Password:** `123456`
+
+    Click **Iniciar Protocolo** to authenticate and enter the dashboard.
+
+    <Note>
+      The login validation requires the email to contain `@` and the password to be at least 3 characters long. The token is hardcoded to `"demo-token"` — no real auth server is involved.
+    </Note>
+  </Step>
+
+  <Step title="Explore the modules">
+    Use the left sidebar to navigate between the three active modules:
+
+    | Module | Sidebar label | Description |
+    |---|---|---|
+    | Dashboard | Dashboard | KPI stats, project list, create/edit form |
+    | Projects | Proyectos | Full project inventory with pagination |
+    | Users | Usuarios | External user directory with audit trail |
+
+    <Warning>
+      The **Configuración** tab is currently reserved and shows a placeholder message. This module is not yet implemented.
+    </Warning>
+  </Step>
+</Steps>
+
+## Available scripts
+
+| Script | Command | Description |
+|---|---|---|
+| Development | `npm run dev` | Starts Vite dev server with HMR |
+| Build | `npm run build` | Produces a production bundle in `dist/` |
+| Preview | `npm run preview` | Serves the production build locally |
+
+## Try the API engineering panel
+
+The sidebar includes a built-in error simulation panel. To use it:
+
+1. Make sure the sidebar is expanded (not collapsed).
+2. Click **Control de Red** in the sidebar to expand the panel.
+3. Click **500**, **401**, or **404** to inject a simulated error globally.
+4. Click **Restaurar (200)** to restore normal operation.
+
+You can also drive it from the browser console:
+
+```js
+// Inject error codes
+window.setSimulatedError(500)  // Triggers a 500 Core Failure
+window.setSimulatedError(401)  // Triggers a 401 Auth Failure
+window.setSimulatedError(404)  // Triggers a 404 Not Found
+
+// Restore normal operation
+window.setSimulatedError(null)
+```
+
+<Info>
+  When you call `window.setSimulatedError(code)`, it dispatches a global `apm:api_status` CustomEvent. All active hooks re-execute their fetches, which now return the simulated error code from the mock server.
+</Info>
+
+## Demo data
+
+The mock server (`src/services/mockServer.js`) ships with pre-seeded data:
+
+```js
+const fakeDb = {
+  me: { id: "u1", name: "Wilber", role: "admin" },
+  stats: { revenue: 18340, newUsers: 27, churn: 0.04 },
+  projects: [
+    { id: "p1", name: "RV4", status: "active", owner: "Backend", budget: 6000 },
+    { id: "p2", name: "Portal Real Estate", status: "paused", owner: "Frontend", budget: 4500 },
+    { id: "p3", name: "ReflexoPeru", status: "active", owner: "Fullstack", budget: 7800 },
+    { id: "p4", name: "Agentes IA", status: "paused", owner: "IA", budget: 2500 },
+  ],
+};
+```
+
+Any projects you create during a session are added to this in-memory database and persist until you refresh the page.
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Dashboard module" icon="chart-line" href="/modules/dashboard">
+    Learn about KPI metrics, the login flow, and project management forms.
+  </Card>
+  <Card title="Architecture overview" icon="layer-group" href="/architecture/overview">
+    Understand the three-layer SoC design pattern used throughout the app.
+  </Card>
+  <Card title="Custom hooks" icon="code" href="/guides/custom-hooks">
+    Explore useFetch, useForm, useDashboard, and the other business logic hooks.
+  </Card>
+  <Card title="Error simulation guide" icon="triangle-exclamation" href="/guides/error-simulation">
+    Deep dive into the API engineering panel and how error injection works.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

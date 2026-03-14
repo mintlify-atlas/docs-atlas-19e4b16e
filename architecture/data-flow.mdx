@@ -1,0 +1,260 @@
+---
+title: "Data Flow"
+description: "How data moves through APM Enterprise — from a user action to a UI update, including the error simulation event bus and authentication flow."
+---
+
+## Normal request flow
+
+Data flows in one direction through the three layers. A user action in the UI propagates down to infrastructure and the response propagates back up to React state.
+
+<Steps>
+  <Step title="User action">
+    The user opens the dashboard or clicks a button that triggers a data load. This fires a handler from the Presentation layer — for example, `DashboardPage` mounts and `useDashboard` begins executing.
+  </Step>
+  <Step title="Hook calls service function">
+    The `useFetch` instance inside `useDashboard` calls its `fetchFn`, which is `() => apiGetDashboard({ token })`. This crosses from the Business Logic layer into the Data layer.
+
+    ```js
+    // src/hooks/useDashboard.js
+    const { data, loading, error: err, execute: load } =
+        useFetch(() => apiGetDashboard({ token }), !!token, [token]);
+    ```
+  </Step>
+  <Step title="Service function calls httpClient">
+    `apiGetDashboard` delegates to `httpClient.get("/dashboard", ...)`, passing the auth token as an override header.
+
+    ```js
+    // src/services/api.js
+    export async function apiGetDashboard({ token }) {
+        const response = await httpClient.get("/dashboard", {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return response;
+    }
+    ```
+  </Step>
+  <Step title="httpClient issues the fetch">
+    `httpClient.get` calls `window.fetch("https://api.apm-enterprise.com/v1/dashboard", ...)`. At this point the call is intercepted by `mockServer.js`.
+  </Step>
+  <Step title="Mock server intercepts and queries fakeDb">
+    The intercepted `window.fetch` identifies the URL as an enterprise API call, validates the Bearer token, and returns a synthetic `Response` built from `fakeDb`.
+
+    ```js
+    // src/services/mockServer.js
+    if (url.includes("/dashboard") && method === "GET") {
+        const data = { me: fakeDb.me, stats: fakeDb.stats, projects: fakeDb.projects };
+        response = new Response(JSON.stringify(data), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+        });
+    }
+    ```
+  </Step>
+  <Step title="Response travels back up the stack">
+    `httpClient`'s `handleResponse` parses the JSON. `apiGetDashboard` awaits the result and returns it to `useFetch`'s `execute` function.
+  </Step>
+  <Step title="Hook sets state, React re-renders">
+    `useFetch` calls `setData(result)`, which triggers a React re-render. `useDashboard` returns the new `data` and `filteredProjects` to `DashboardPage`, which renders the updated stats and project list.
+  </Step>
+</Steps>
+
+---
+
+## Error simulation flow
+
+The sidebar engineering panel lets developers inject HTTP error codes globally without modifying any source files.
+
+<Warning>
+`window.setSimulatedError(code)` affects **all modules simultaneously**. Every hook listening to `apm:api_status` — including `useFetch` instances and `useUsers` — will react at the same time. There is no way to simulate an error in one module while leaving others unaffected.
+</Warning>
+
+<Steps>
+  <Step title="Developer clicks a button in the sidebar panel">
+    The Layout component calls `window.setSimulatedError(500)` (or 401, 404, or null for restore).
+  </Step>
+  <Step title="setSimulatedError sets the global flag and dispatches an event">
+    ```js
+    // src/services/mockServer.js
+    window.setSimulatedError = (code) => {
+        window.SIMULATE_ERROR = code;
+        const msg = code ? `Inyección código ${code}` : "Restaurado Protocolo 200";
+        console.log(`🛠️ Control API: ${msg}`);
+
+        const event = new CustomEvent("apm:api_status", { detail: { code: code || 200, message: msg } });
+        window.dispatchEvent(event);
+    };
+    ```
+
+    `window.SIMULATE_ERROR` is now set to the error code. All future intercepted requests will return a synthetic error response until it is cleared.
+  </Step>
+  <Step title="All apm:api_status listeners fire">
+    Three independent listeners receive the event simultaneously:
+    - `App.jsx` — closes any open error modal, then re-opens it after 50ms with the new code
+    - `useFetch` instances — re-execute their `fetchFn` (which will now fail)
+    - `useUsers` — clears the users array immediately, then re-fetches
+  </Step>
+  <Step title="Re-executed requests return error responses">
+    The mock server intercept checks `window.SIMULATE_ERROR` before processing any route:
+
+    ```js
+    // src/services/mockServer.js
+    if (window.SIMULATE_ERROR) {
+        await sleep(500);
+        const errCode = window.SIMULATE_ERROR;
+        return new Response(
+            JSON.stringify({ error: true, status: errCode, message: "Falla de Auditoría del Sistema" }),
+            { status: errCode, headers: { "Content-Type": "application/json" } }
+        );
+    }
+    ```
+  </Step>
+  <Step title="Hooks update state with errors">
+    `httpClient`'s `handleResponse` throws because `response.ok` is false. `useFetch` catches the error and calls `setData(null)` and `setError(...)`. Tables and lists render empty states.
+  </Step>
+  <Step title="ErrorModal renders with the correct colour">
+    `App.jsx` renders `<ErrorModal>` with `errorCode` set to the simulated code. The modal colour is determined by code: 200 = emerald, 401 = violet, 404 = blue, 500 = red.
+  </Step>
+</Steps>
+
+---
+
+## Event bus pattern
+
+APM Enterprise uses a **global CustomEvent as a lightweight event bus**. The event name is `apm:api_status`.
+
+This pattern allows `mockServer.js` (infrastructure layer) to communicate state changes to `App.jsx` (presentation layer) and multiple hooks (business logic layer) **without any of these files importing each other**.
+
+**Dispatch** — fired from `mockServer.js` via `window.setSimulatedError`:
+
+```js
+// src/services/mockServer.js
+const event = new CustomEvent("apm:api_status", { detail: { code: code || 200, message: msg } });
+window.dispatchEvent(event);
+```
+
+**Consumption in App.jsx** — controls the `ErrorModal`:
+
+```jsx
+// src/App.jsx
+useEffect(() => {
+    const handleApiStatus = (e) => {
+        const { code, message } = e.detail;
+        setErrorModal({ isOpen: false, code: null, message: "" });
+        setTimeout(() => {
+            setErrorModal({ isOpen: true, code, message });
+        }, 50);
+    };
+    window.addEventListener("apm:api_status", handleApiStatus);
+    return () => window.removeEventListener("apm:api_status", handleApiStatus);
+}, []);
+```
+
+The 50ms `setTimeout` forces the modal to unmount and remount even if the same error code is fired twice in a row, ensuring the enter animation always plays.
+
+**Consumption in useFetch** — triggers a data refetch:
+
+```js
+// src/hooks/useFetch.js
+useEffect(() => {
+    const handleStatus = (e) => {
+        if (autoExecute) execute();
+    };
+    window.addEventListener("apm:api_status", handleStatus);
+    return () => window.removeEventListener("apm:api_status", handleStatus);
+}, [execute, autoExecute]);
+```
+
+**Consumption in useUsers** — clears data on non-200 codes:
+
+```js
+// src/hooks/useUsers.js
+useEffect(() => {
+    const handleStatus = (e) => {
+        if (e.detail.code !== 200) setUsers([]);
+        fetchUsers();
+    };
+    window.addEventListener("apm:api_status", handleStatus);
+    return () => window.removeEventListener("apm:api_status", handleStatus);
+}, [fetchUsers]);
+```
+
+<Note>
+All event listeners clean up after themselves via the `useEffect` cleanup function (`return () => window.removeEventListener(...)`), preventing memory leaks when components unmount.
+</Note>
+
+---
+
+## Authentication flow
+
+Authentication in APM Enterprise is token-based and entirely client-side. The token is a string stored in `useDashboard`'s local state.
+
+<Steps>
+  <Step title="Initial load">
+    `useDashboard` initialises `token` to `"demo-token"`. Because `autoExecute` in `useFetch` is `!!token` (truthy), the dashboard fetch fires immediately on mount — no login is required by default.
+
+    ```js
+    // src/hooks/useDashboard.js
+    const [token, setToken] = useState("demo-token");
+    ```
+  </Step>
+  <Step title="Logout clears the token">
+    Calling `onLogout()` sets `token` to an empty string and clears `data`. Because `useFetch` receives `!!token` (now `false`) as `autoExecute`, the fetch will not re-execute automatically.
+
+    ```js
+    function onLogout() {
+        setToken("");
+        setData(null);
+    }
+    ```
+
+    `DashboardPage` detects `!dash.token` and renders the login form instead of the dashboard.
+  </Step>
+  <Step title="Login validates credentials and restores the token">
+    `onLogin` performs a simple client-side validation: the email must contain `@` and the password must be at least 3 characters. On success, it calls `setToken("demo-token")`.
+
+    ```js
+    function onLogin(e) {
+        e.preventDefault();
+        if (!email.includes("@") || pass.length < 3) {
+            alert("Credenciales inválidas (simulado)");
+            return;
+        }
+        setToken("demo-token");
+    }
+    ```
+  </Step>
+  <Step title="Token change triggers re-fetch">
+    `useFetch` receives `[token]` as its `deps` array. Changing `token` triggers the internal `useEffect`, which calls `execute()` with the new token value, reloading the dashboard data.
+  </Step>
+  <Step title="Mock server validates the token">
+    The interceptor checks the `Authorization` header on every enterprise API call. If the token is missing or is not `"demo-token"`, it returns a 401 response immediately.
+
+    ```js
+    // src/services/mockServer.js
+    if (isEnterpriseApi && (!token || token !== "demo-token")) {
+        return new Response(JSON.stringify({ error: "No autorizado" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+        });
+    }
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Error response matrix
+
+The following table documents the full behaviour of the system for each simulated error code, matching the engineering specification in the project README.
+
+| Code | Status | System behavior | Modal color |
+| --- | --- | --- | --- |
+| **200** | SUCCESS | Restores all data flows immediately; hooks re-fetch and repopulate tables | Emerald |
+| **401** | AUTH FAIL | `useFetch` clears data; `useUsers` clears user list; error modal shows session expiry message | Violet |
+| **404** | NOT FOUND | Hooks set data to null; pages render empty states | Blue |
+| **500** | CORE FAIL | Emergency protocol fires; all tables are cleared; error modal shows critical failure message | Red |
+
+<Tip>
+To restore normal operation after simulating an error, click **Restaurar (200)** in the sidebar panel. This calls `window.setSimulatedError(null)`, which clears `window.SIMULATE_ERROR` and dispatches `apm:api_status` with `code: 200`, causing all hooks to refetch successfully.
+</Tip>

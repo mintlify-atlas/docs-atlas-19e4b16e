@@ -1,0 +1,72 @@
+---
+title: "Introduction"
+description: "APM Enterprise is a React-based enterprise network management dashboard built for engineering teams that need a structured, auditable view of projects, users, and system metrics."
+---
+
+APM Enterprise (v5) is an enterprise-grade network audit ecosystem built with React. It is designed for engineering leads and teams who need a professional, structured interface for managing projects, monitoring operational metrics, and auditing user activity — all backed by a realistic simulation layer that requires no real backend.
+
+The application was built across three intensive development sprints, with each sprint adding a distinct architectural layer: core refactoring, senior-level logic with custom hooks, and a premium UI with integrated API error simulation.
+
+<Note>
+  APM Enterprise runs entirely in **demo mode**. The mock server (`src/services/mockServer.js`) intercepts all HTTP requests at the `window.fetch` level and returns realistic responses from an in-memory database — no real backend or network connection is required.
+</Note>
+
+## Modules
+
+The application exposes four top-level tabs. Three are fully implemented; the configuration module is currently reserved.
+
+<CardGroup cols={2}>
+  <Card title="Dashboard" icon="layout-dashboard" href="/modules/dashboard">
+    Central control panel showing key metrics (revenue, new users, churn rate), a filterable project list, and a project creation and edit form.
+  </Card>
+  <Card title="Projects" icon="briefcase" href="/modules/projects">
+    Full project registry with status tracking (active / paused), budget management in PEN, and owner assignment.
+  </Card>
+  <Card title="Users" icon="users" href="/modules/users">
+    User directory sourced from an external audit endpoint (JSONPlaceholder), with error-handling integration tied to the API engineering panel.
+  </Card>
+  <Card title="Architecture" icon="layer-group" href="/architecture/overview">
+    Three-layer SoC design — Presentation, Business Logic, and Data/Infrastructure explained in depth.
+  </Card>
+</CardGroup>
+
+## Architecture
+
+APM Enterprise is structured around a strict **Separation of Concerns (SoC)** pattern, dividing the codebase into three decoupled layers:
+
+| Layer | Responsibility | Key files |
+| --- | --- | --- |
+| **Presentation (UI)** | Pages, atomic components, skeletons, and modals | `src/pages/`, `src/components/` |
+| **Logic (Business)** | Custom hooks — `useFetch`, `useForm`, `useDashboard`, `useProjectForm` | `src/hooks/` |
+| **Data (Infrastructure)** | Centralized HTTP client, API client, mock server interceptor | `src/services/httpClient.js`, `src/services/mockServer.js` |
+
+The HTTP client (`httpClient.js`) targets `https://api.apm-enterprise.com/v1` and attaches a `Bearer demo-token` authorization header on every request. In practice, all calls to this base URL are intercepted by the mock server before they ever reach the network.
+
+## API engineering panel
+
+The sidebar contains a built-in API engineering panel that lets you inject HTTP error codes into the running application at any time. It works by calling `window.setSimulatedError(code)`, which:
+
+1. Sets `window.SIMULATE_ERROR` to the given code.
+2. Fires a global `CustomEvent` on `window` with the type `apm:api_status`.
+3. `App.jsx` listens for this event and updates the error modal state accordingly.
+4. The mock server returns the simulated error code on the next intercepted API request.
+
+| Code | Status | System behavior | Modal color |
+| --- | --- | --- | --- |
+| `200` | SUCCESS | Restores all data flows immediately | Emerald |
+| `401` | AUTH FAIL | Clears local cache, notifies session expiry | Violet |
+| `404` | NOT FOUND | Renders resource-specific empty state | Blue |
+| `500` | CORE FAIL | Triggers emergency protocol, clears tables | Red |
+
+To reset to normal operation, call `window.setSimulatedError(null)` from the panel or the browser console.
+
+## Technology stack
+
+| Technology | Version | Role |
+| --- | --- | --- |
+| React | 18.2 | UI framework |
+| Vite | 5.2 | Build tool and dev server |
+| Tailwind CSS | 4.2 | Utility-first styling |
+| Lucide React | 0.577 | Icon library |
+| Radix UI Slot | 1.2 | Accessible component primitives |
+| clsx + tailwind-merge | latest | Conditional class composition |

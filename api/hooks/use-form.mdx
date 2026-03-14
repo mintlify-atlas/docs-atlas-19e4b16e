@@ -1,0 +1,122 @@
+---
+title: "useForm"
+description: "Generic form state management hook with validation support."
+---
+
+`useForm` manages form field values, per-field validation errors, and submission state. It is used directly by [`useProjectForm`](/api/hooks/use-project-form) and can be used for any form in the application.
+
+## Signature
+
+```js
+useForm(initialValues = {}, validate)
+```
+
+## Source code
+
+<Accordion title="useForm.js — full source">
+
+```js hooks/useForm.js
+import { useState, useCallback } from "react";
+
+export function useForm(initialValues = {}, validate) {
+    const [values, setValues] = useState(initialValues);
+    const [errors, setErrors] = useState({});
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const onChange = useCallback((name, value) => {
+        setValues((prev) => ({ ...prev, [name]: value }));
+
+        if (validate) {
+            const fieldError = validate({ [name]: value });
+            setErrors((prev) => ({ ...prev, [name]: fieldError[name] || null }));
+        }
+    }, [validate]);
+
+    const reset = useCallback(() => {
+        setValues(initialValues);
+        setErrors({});
+        setIsSubmitting(false);
+    }, [initialValues]);
+
+    const onSubmit = useCallback(async (e, callback) => {
+        if (e) e.preventDefault();
+
+        if (validate) {
+            const validationErrors = validate(values);
+            setErrors(validationErrors);
+            if (Object.values(validationErrors).some(err => err !== null)) return;
+        }
+
+        setIsSubmitting(true);
+        try {
+            await callback(values);
+        } finally {
+            setIsSubmitting(false);
+        }
+    }, [values, validate]);
+
+    return {
+        values,
+        errors,
+        isSubmitting,
+        onChange,
+        reset,
+        onSubmit,
+        setValues,
+        setErrors
+    };
+}
+```
+
+</Accordion>
+
+## Parameters
+
+<ParamField path="initialValues" type="object" default="{}">
+  An object whose keys are field names and whose values are the initial field values. Used both to populate state on mount and to restore state when `reset()` is called.
+</ParamField>
+
+<ParamField path="validate" type="(values: object) => Record<string, string | null>">
+  Optional validation function. Receives a subset of current values (during `onChange`) or all values (during `onSubmit`). Must return an object keyed by field name where each value is either an error string or `null`.
+</ParamField>
+
+## Return value
+
+<ResponseField name="values" type="object">
+  Current form field values. Updated on every `onChange` call.
+</ResponseField>
+
+<ResponseField name="errors" type="Record<string, string | null>">
+  Current per-field validation errors. A field error is `null` when that field is valid.
+</ResponseField>
+
+<ResponseField name="isSubmitting" type="boolean">
+  `true` while the `callback` passed to `onSubmit` is awaiting. Automatically reset to `false` when the callback resolves or rejects.
+</ResponseField>
+
+<ResponseField name="onChange" type="(name: string, value: any) => void">
+  Updates a single field value and immediately runs field-level validation for that field if a `validate` function was provided.
+</ResponseField>
+
+<ResponseField name="reset" type="() => void">
+  Resets `values` to `initialValues`, clears all `errors`, and sets `isSubmitting` to `false`.
+</ResponseField>
+
+<ResponseField name="onSubmit" type="(e: Event | null, callback: (values: object) => Promise<void>) => Promise<void>">
+  Form submit handler. Calls `e.preventDefault()` if `e` is provided, runs full validation across all fields, and — if valid — calls `callback(values)` while managing the `isSubmitting` flag. If any field error is non-null, submission is aborted.
+</ResponseField>
+
+<ResponseField name="setValues" type="React.Dispatch">
+  Direct state setter for `values`. Used by `useProjectForm` to populate fields when entering edit mode.
+</ResponseField>
+
+<ResponseField name="setErrors" type="React.Dispatch">
+  Direct state setter for `errors`. Use to inject server-side validation errors.
+</ResponseField>
+
+## Validation behavior
+
+Validation runs in two contexts:
+
+1. **On change** — `validate` is called with a single-field object `{ [name]: value }`. Only the error for that field is updated in state, leaving other field errors unchanged.
+2. **On submit** — `validate` is called with the full `values` object. All field errors are set simultaneously. If any error is non-null, submission halts.

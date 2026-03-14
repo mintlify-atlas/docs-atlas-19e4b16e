@@ -1,0 +1,437 @@
+---
+title: "System Layers"
+description: "Deep dive into each of the three architectural layers in APM Enterprise: Presentation, Business Logic, and Data/Infrastructure."
+---
+
+APM Enterprise separates every concern into one of three layers. This page documents what lives in each layer, why, and how the pieces connect.
+
+## Presentation layer (UI)
+
+The presentation layer contains everything the user sees. Its only job is to render data and route user interactions to hooks. No file in this layer ever calls `fetch`, imports a service function, or contains async business logic.
+
+### Pages
+
+There are three route-level pages, each paired with its domain hook:
+
+| Page | Hook | Responsibility |
+| --- | --- | --- |
+| `DashboardPage.jsx` | `useDashboard` + `useProjectForm` | Stats, project list, project create/edit form, login screen |
+| `ProjectsPage.jsx` | — | Project-focused view |
+| `UsersPage.jsx` | `useUsers` | External user directory from JSONPlaceholder |
+
+`DashboardPage` is the most complex page. It destructures all state from `useDashboard()` and all form state from `useProjectForm()`, then wires them into JSX:
+
+```jsx
+// src/pages/DashboardPage.jsx
+export default function DashboardPage() {
+    const dash = useDashboard();
+    const form = useProjectForm(
+        dash.token,
+        (project) => {
+            dash.setData((prev) => {
+                if (!prev) return prev;
+                const exists = prev.projects?.some(p => p.id === project.id);
+                return {
+                    ...prev,
+                    projects: exists
+                        ? prev.projects.map(p => p.id === project.id ? project : p)
+                        : [project, ...(prev.projects || [])]
+                };
+            });
+        },
+        dash.setSelectedId
+    );
+    // ... JSX only below this point
+}
+```
+
+The page passes a callback to `useProjectForm` that performs an optimistic state merge directly into `useDashboard`'s data — keeping the project list in sync without a full network refetch.
+
+### Atomic components
+
+All UI primitives live in `src/components/`. They are stateless (or hold only local UI state) and accept data exclusively through props.
+
+<AccordionGroup>
+  <Accordion title="Badge">
+    Renders a coloured pill label. Accepts a `variant` prop (`success`, `warn`, `danger`) to control colour.
+  </Accordion>
+  <Accordion title="Button">
+    Polymorphic button built on `@radix-ui/react-slot`. Accepts `variant` (`primary`, `secondary`, `outline`, `ghost`) and `size` props.
+  </Accordion>
+  <Accordion title="Card">
+    Container with rounded corners and optional shadow. Accepts a `variant` prop (`default`, `glass`).
+  </Accordion>
+  <Accordion title="ErrorModal">
+    Full-screen overlay modal. Receives `isOpen`, `errorCode`, `message`, and `onClose`. Colour scheme changes based on `errorCode` (200 = emerald, 401 = violet, 404 = blue, 500 = red).
+  </Accordion>
+  <Accordion title="StatCard">
+    KPI card with a title, formatted value, hint text, and Lucide icon. Used in the dashboard stats row.
+  </Accordion>
+  <Accordion title="TextField">
+    Labelled text input with optional inline error message. Delegates `onChange` back to the caller.
+  </Accordion>
+  <Accordion title="Select">
+    Labelled `<select>` element with typed options array.
+  </Accordion>
+  <Accordion title="ProjectList">
+    Renders a list of project rows with click and double-click selection.
+  </Accordion>
+  <Accordion title="Tooltip">
+    Hover tooltip wrapper.
+  </Accordion>
+</AccordionGroup>
+
+### Layout.jsx
+
+`Layout` is the application shell. It manages two pieces of local state:
+
+- `isCollapsed` — whether the sidebar is in narrow (icon-only) or wide mode
+- `showSim` — whether the engineering error simulation panel is expanded
+
+```jsx
+// src/components/Layout.jsx
+export function Layout({ children, user, activeTab, setTab }) {
+    const [isCollapsed, setIsCollapsed] = useState(false);
+    const [showSim, setShowSim] = useState(false);
+    // ...
+}
+```
+
+The layout renders three regions:
+
+1. **Sidebar** (`<aside>`) — fixed-position, collapsible. Contains the APM logo, nav items for Dashboard / Projects / Users, the engineering panel, and a user/logout section at the bottom.
+2. **Header** (`<header>`) — sticky top bar showing the current user's name, role, and avatar from DiceBear.
+3. **Main content** (`<main>`) — renders `{children}`, which is whichever page `App.jsx` has selected via `activeTab`.
+
+### Engineering panel
+
+The sidebar contains an expandable "Control de Red" panel that exposes `window.setSimulatedError` as buttons:
+
+```jsx
+// src/components/Layout.jsx (inside sidebar)
+<button onClick={() => window.setSimulatedError(500)}>500</button>
+<button onClick={() => window.setSimulatedError(401)}>401</button>
+<button onClick={() => window.setSimulatedError(404)}>404</button>
+<button onClick={() => { window.setSimulatedError(null); setShowSim(false); }}>
+    Restaurar (200)
+</button>
+```
+
+This panel is only visible when the sidebar is in expanded mode (`!isCollapsed`).
+
+---
+
+## Business logic layer (custom hooks)
+
+All async state, derived data, and form logic lives in `src/hooks/`. Hooks compose other hooks; they never import components.
+
+### useFetch
+
+`useFetch` is the generic async data-fetching primitive used throughout the application.
+
+```js
+// src/hooks/useFetch.js
+export function useFetch(fetchFn, autoExecute = true, deps = []) {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const abortControllerRef = useRef(null);
+
+    const execute = useCallback(async (...args) => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        abortControllerRef.current = new AbortController();
+        setLoading(true);
+        setError(null);
+        try {
+            const result = await fetchFn(...args);
+            setData(result);
+            return result;
+        } catch (err) {
+            if (err.name === "AbortError") return;
+            setData(null);
+            setError({ message: err.message || "Error", status: err.status || 0 });
+            throw err;
+        } finally {
+            setLoading(false);
+        }
+    }, [fetchFn]);
+
+    useEffect(() => {
+        const handleStatus = (e) => {
+            if (autoExecute) execute();
+        };
+        window.addEventListener("apm:api_status", handleStatus);
+        return () => window.removeEventListener("apm:api_status", handleStatus);
+    }, [execute, autoExecute]);
+
+    // ...
+    return { data, loading, error, execute, setData, setError };
+}
+```
+
+Key design decisions:
+
+- **AbortController** — each new `execute()` call aborts any in-flight request from the previous call, preventing stale responses from overwriting newer data.
+- **`autoExecute`** — when `true`, `useFetch` runs on mount and re-runs whenever the `apm:api_status` event fires, making every consuming hook automatically reactive to error simulation changes.
+- **`deps` array** — passed directly to the internal `useEffect`, so `useDashboard` can re-trigger a fetch when the auth `token` changes.
+
+### useForm
+
+`useForm` is the generic form state manager. It handles field values, field-level validation, and async submit.
+
+```js
+// src/hooks/useForm.js
+export function useForm(initialValues = {}, validate) {
+    const [values, setValues] = useState(initialValues);
+    const [errors, setErrors] = useState({});
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const onChange = useCallback((name, value) => {
+        setValues((prev) => ({ ...prev, [name]: value }));
+        if (validate) {
+            const fieldError = validate({ [name]: value });
+            setErrors((prev) => ({ ...prev, [name]: fieldError[name] || null }));
+        }
+    }, [validate]);
+
+    const onSubmit = useCallback(async (e, callback) => {
+        if (e) e.preventDefault();
+        if (validate) {
+            const validationErrors = validate(values);
+            setErrors(validationErrors);
+            if (Object.values(validationErrors).some(err => err !== null)) return;
+        }
+        setIsSubmitting(true);
+        try {
+            await callback(values);
+        } finally {
+            setIsSubmitting(false);
+        }
+    }, [values, validate]);
+
+    return { values, errors, isSubmitting, onChange, reset, onSubmit, setValues, setErrors };
+}
+```
+
+Validation runs on every `onChange` (single-field) and again on `onSubmit` (full form) before the async callback is invoked.
+
+### useDashboard
+
+`useDashboard` is the domain hook for the dashboard page. It composes `useFetch` and adds auth state, filtering, and project selection.
+
+```js
+// src/hooks/useDashboard.js
+export function useDashboard() {
+    const [token, setToken] = useState("demo-token");
+    // ...
+
+    const { data, loading, error: err, execute: load, setData, setError: setErr } =
+        useFetch(() => apiGetDashboard({ token }), !!token, [token]);
+
+    const filteredProjects = useMemo(() => {
+        const items = data?.projects || [];
+        return items
+            .filter((p) => (statusFilter === "all" ? true : p.status === statusFilter))
+            .filter((p) => (q.trim() ? p.name.toLowerCase().includes(q.trim().toLowerCase()) : true));
+    }, [data, q, statusFilter]);
+
+    function onLogin(e) {
+        e.preventDefault();
+        if (!email.includes("@") || pass.length < 3) {
+            alert("Credenciales inválidas (simulado)");
+            return;
+        }
+        setToken("demo-token");
+    }
+
+    function onLogout() {
+        setToken("");
+        setData(null);
+    }
+    // ...
+}
+```
+
+`filteredProjects` is a `useMemo` — it recomputes only when `data`, `q` (search query), or `statusFilter` change. The token is initialised to `"demo-token"` so the dashboard loads immediately on mount without requiring a login.
+
+### useProjectForm
+
+`useProjectForm` composes `useForm` with project-specific validation and API calls. It handles both create and edit modes via an `editingId` state flag.
+
+```js
+// src/hooks/useProjectForm.js
+export function useProjectForm(token, onProjectCreated, setSelectedId) {
+    const validate = (values) => {
+        const errs = {};
+        if (values.name !== undefined)
+            errs.name = values.name.trim().length < 3 ? "Minimo 3 caracteres" : null;
+        if (values.owner !== undefined)
+            errs.owner = values.owner.trim().length < 2 ? "Owner muy corto" : null;
+        if (values.budget !== undefined)
+            errs.budget = isNaN(Number(values.budget)) ? "Debe ser numero" : null;
+        return errs;
+    };
+
+    const [editingId, setEditingId] = useState(null);
+    const { values, errors, isSubmitting: saving, onChange, onSubmit, reset, setValues } =
+        useForm({ name: "", owner: "", budget: "0", status: "active" }, validate);
+
+    const handleAction = async (formValues) => {
+        if (editingId) {
+            const updated = await apiUpdateProject({ token, id: editingId, payload: { ... } });
+            onProjectCreated(updated);
+        } else {
+            const created = await apiCreateProject({ token, payload: { ... } });
+            onProjectCreated(created);
+            setSelectedId(created.id);
+        }
+    };
+    // ...
+}
+```
+
+When `editingId` is set, `onAction` calls `apiUpdateProject`; when it is null, it calls `apiCreateProject`. The `onProjectCreated` callback (provided by `DashboardPage`) merges the result into the dashboard's local data state.
+
+### useUsers
+
+`useUsers` wraps `apiClient.getUsers()` with its own loading/error state. Unlike `useDashboard`, it does not use `useFetch` — it manages state manually and listens to `apm:api_status` directly.
+
+```js
+// src/hooks/useUsers.js
+export function useUsers() {
+    const [users, setUsers] = useState([]);
+    // ...
+
+    useEffect(() => {
+        const handleStatus = (e) => {
+            if (e.detail.code !== 200) setUsers([]);
+            fetchUsers();
+        };
+        window.addEventListener("apm:api_status", handleStatus);
+        return () => window.removeEventListener("apm:api_status", handleStatus);
+    }, [fetchUsers]);
+    // ...
+}
+```
+
+On a non-200 status event, `useUsers` immediately clears the users array (empty state) before attempting the refetch, giving instant visual feedback.
+
+---
+
+## Data layer (services & infrastructure)
+
+The data layer owns all network communication. Nothing above this layer knows about URLs, HTTP methods, or response shapes.
+
+### httpClient.js
+
+`httpClient` is a thin wrapper around the native `fetch` API. It centralises three concerns:
+
+1. **Base URL** — `https://api.apm-enterprise.com/v1` is defined once.
+2. **Auth header injection** — `getHeaders()` injects `Authorization: Bearer demo-token` by default; callers can override with a dynamic token.
+3. **Error normalisation** — `handleResponse()` converts non-OK HTTP responses into thrown `Error` objects with a `.status` property.
+
+```js
+// src/services/httpClient.js
+const BASE_URL = "https://api.apm-enterprise.com/v1";
+
+async function handleResponse(response) {
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const error = new Error(errorData.message || "Error de comunicación con el servidor");
+        error.status = response.status;
+        throw error;
+    }
+    return response.json();
+}
+
+const getHeaders = (extraHeaders = {}) => ({
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer demo-token',
+    ...extraHeaders,
+});
+
+export const httpClient = {
+    async get(endpoint, options = {}) { /* ... */ },
+    async post(endpoint, data, options = {}) { /* ... */ },
+    async put(endpoint, data, options = {}) { /* ... */ },
+    async patch(endpoint, data, options = {}) { /* ... */ },
+    async delete(endpoint, options = {}) { /* ... */ },
+};
+```
+
+### api.js
+
+`api.js` defines the high-level service functions for the APM Enterprise API. Each function takes a typed parameter object and delegates to `httpClient`.
+
+```js
+// src/services/api.js
+export async function apiGetDashboard({ token }) {
+    const response = await httpClient.get("/dashboard", {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+    await new Promise(resolve => setTimeout(resolve, 1000)); // simulated latency
+    return response;
+}
+
+export async function apiCreateProject({ token, payload }) {
+    return httpClient.post("/projects", payload, {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+}
+
+export async function apiToggleProjectStatus({ token, id }) {
+    return httpClient.patch(`/projects/${id}/toggle`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+}
+
+export async function apiUpdateProject({ token, id, payload }) {
+    return httpClient.put(`/projects/${id}`, payload, {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+}
+```
+
+### apiClient.js
+
+`apiClient` calls the external JSONPlaceholder API directly with `fetch` (bypassing `httpClient`, since JSONPlaceholder uses a different base URL and has no auth requirement).
+
+```js
+// src/services/apiClient.js
+const USERS_BASE_URL = "https://jsonplaceholder.typicode.com";
+
+export const apiClient = {
+    async getUsers() { /* GET /users */ },
+    async getUserPosts(userId) { /* GET /posts?userId=... */ },
+    async getPostComments(postId) { /* GET /comments?postId=... */ },
+};
+```
+
+These calls pass through `mockServer.js` only for logging — the mock server does not intercept JSONPlaceholder responses, it forwards them via `originalFetch`.
+
+### mockServer.js
+
+`mockServer.js` is a **fetch interceptor**. It replaces `window.fetch` at import time (which happens in `main.jsx`) and intercepts all calls that match `api.apm-enterprise.com`.
+
+It maintains an in-memory `fakeDb` object that serves as the application's fake database:
+
+```js
+// src/services/mockServer.js
+const fakeDb = {
+    me: { id: "u1", name: "Wilber", role: "admin" },
+    stats: { revenue: 18340, newUsers: 27, churn: 0.04 },
+    projects: [
+        { id: "p1", name: "RV4", status: "active", owner: "Backend", budget: 6000 },
+        { id: "p2", name: "Portal Real Estate", status: "paused", owner: "Frontend", budget: 4500 },
+        { id: "p3", name: "ReflexoPeru", status: "active", owner: "Fullstack", budget: 7800 },
+        { id: "p4", name: "Agentes IA", status: "paused", owner: "IA", budget: 2500 },
+    ],
+};
+```
+
+New projects created via the form are prepended to `fakeDb.projects` and persist for the lifetime of the browser session.
+
+The interceptor also exposes `window.setSimulatedError(code)`, which sets `window.SIMULATE_ERROR` and fires the `apm:api_status` CustomEvent. When `SIMULATE_ERROR` is non-null, every subsequent intercepted request returns a synthetic error response with that HTTP status code.

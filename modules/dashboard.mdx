@@ -1,0 +1,175 @@
+---
+title: "Dashboard"
+description: "KPI control panel with project listing and project creation for the APM Enterprise engineering ecosystem."
+---
+
+## Overview
+
+The Dashboard module is the primary entry point for APM Enterprise. It serves as a central control panel combining three KPI metric cards, a filterable project list, a sticky project detail panel, and a project creation/edit form — all within a single view.
+
+Before any data is displayed, the dashboard enforces an authentication gate. Users who have not yet authenticated see the **Acceso Corporativo** login card. Only after a valid token is set does the full dashboard render.
+
+<Note>
+Dashboard data auto-refreshes whenever the `apm:api_status` custom event fires on `window`. The `useDashboard` hook subscribes to this event via `useFetch`, so any call to `window.setSimulatedError()` from the browser console will trigger a reload automatically.
+</Note>
+
+---
+
+## Login flow
+
+The authentication gate renders when `dash.token` is falsy. On submission, the `onLogin` handler in `useDashboard` performs simple client-side credential validation before setting the session token.
+
+```js
+// src/hooks/useDashboard.js
+function onLogin(e) {
+    e.preventDefault();
+    if (!email.includes("@") || pass.length < 3) {
+        alert("Credenciales inválidas (simulado)");
+        return;
+    }
+    setToken("demo-token");
+}
+```
+
+<Steps>
+  <Step title="Open the dashboard">
+    Navigate to the Dashboard route. If no token is stored in state, the **Acceso Corporativo** card is shown instead of the dashboard content.
+  </Step>
+  <Step title="Enter credentials">
+    Fill in **Correo Institucional** (email) and **Clave de Auditoría** (password) in the login form.
+  </Step>
+  <Step title="Validation">
+    The `onLogin` function validates two rules before proceeding:
+    - The email address must contain `@`.
+    - The password must be at least 3 characters long.
+
+    If either condition fails, an alert is shown and the token is not set.
+  </Step>
+  <Step title="Token assignment">
+    On successful validation, `setToken("demo-token")` is called. The `useFetch` hook detects the new token value and immediately fires `apiGetDashboard`, fetching the dashboard payload.
+  </Step>
+  <Step title="Dashboard renders">
+    Once `dash.token` is truthy, the auth-gate branch is skipped and the full Panel de Control renders with KPIs, project list, detail panel, and project form.
+  </Step>
+</Steps>
+
+---
+
+## KPI metrics
+
+The KPI section renders three `StatCard` components in a responsive 3-column grid. Each card receives its value from `dash.data.stats`, which is populated by the `/dashboard` API response.
+
+```jsx
+// src/pages/DashboardPage.jsx
+<section className="grid grid-cols-1 gap-6 md:grid-cols-3">
+    <StatCard
+        title="Ingresos Totales"
+        value={dash.data ? money(dash.data.stats.revenue) : "$0.00"}
+        hint="Mensual"
+        icon={<DollarSign size={24} />}
+    />
+    <StatCard
+        title="Nuevos Usuarios"
+        value={dash.data ? String(dash.data.stats.newUsers) : "0"}
+        hint="Últimos 7 días"
+        icon={<Users size={24} />}
+    />
+    <StatCard
+        title="Tasa de Abandono"
+        value={dash.data ? `${Math.round(dash.data.stats.churn * 100)}%` : "0%"}
+        hint="Retención"
+        icon={<TrendingUp size={24} />}
+    />
+</section>
+```
+
+| Card title | Description | Source field |
+|---|---|---|
+| Ingresos Totales | Monthly revenue, formatted as currency via `money()` | `dash.data.stats.revenue` |
+| Nuevos Usuarios | Count of new users registered in the last 7 days | `dash.data.stats.newUsers` |
+| Tasa de Abandono | Churn rate expressed as a percentage (`churn * 100`, rounded) | `dash.data.stats.churn` |
+
+The mock server seeds these values as `{ revenue: 18340, newUsers: 27, churn: 0.04 }`, yielding **$18,340.00**, **27 users**, and **4%** respectively.
+
+---
+
+## Project listing
+
+Below the KPI row, a **Listado de Proyectos** card displays filtered projects from `dash.filteredProjects`. The list is capped at 5 items via `.slice(0, 5)`.
+
+**Status filter** — A `<Select>` in the card header provides three options:
+
+| Value | Label |
+|---|---|
+| `all` | Todos |
+| `active` | Activo |
+| `paused` | Pausado |
+
+Changing the filter updates `dash.statusFilter`, which recomputes `filteredProjects` through the `useMemo` in `useDashboard`.
+
+**Click to select** — Clicking a project row calls `dash.setSelectedId(p.id)` (only when the row is not already active). The selected row receives a highlighted ring style and shifts slightly to the right.
+
+**Double-click to deselect** — Double-clicking any row calls `dash.setSelectedId(null)`, clearing the detail panel.
+
+---
+
+## Project detail panel
+
+The right column (`lg:col-span-4`) renders a sticky panel at `top-28`. When a project is selected (`dash.selected` is non-null), the panel displays:
+
+| Field | Value source |
+|---|---|
+| Project name | `dash.selected.name` |
+| ID | `dash.selected.id` |
+| Responsable (owner) | `dash.selected.owner` |
+| Estado (status badge) | `dash.selected.status` — green for `active`, amber for `paused` |
+| Presupuesto (budget) | `dash.selected.budget` formatted via `money()` |
+
+The panel also exposes an **Editar** button that calls `form.prepareEdit(dash.selected)`, pre-filling the create/edit form at the bottom of the page and scrolling to it.
+
+When no project is selected, a placeholder with a dashed border and `LayoutDashboard` icon is shown instead.
+
+---
+
+## Create/Edit project form
+
+The form below the project list handles both creation and editing. Its state is managed by the `useProjectForm` hook.
+
+**Form fields:**
+
+| Field | Label | Type | Validation |
+|---|---|---|---|
+| `name` | Nombre del Proyecto | Text | Minimum 3 characters |
+| `owner` | Responsable | Text | Minimum 2 characters |
+| `budget` | Presupuesto Inicial (PEN) | Text | Must be a valid number |
+| `status` | Estado | Select (`active` / `paused`) | — |
+
+**Submit button** — The button label changes based on the form mode:
+- Create mode: **Generar Proyecto**
+- Edit mode: **Guardar Cambios**
+
+While the API call is in-flight, `form.saving` is `true` and the button shows **Procesando...** and is disabled.
+
+**Cancel edit** — When `form.editingId` is set, a **Cancelar Edición** button appears next to the form title. Clicking it calls `form.cancelEdit()`, which resets all fields and clears `editingId`.
+
+On successful submission, `useProjectForm` calls `onProjectCreated(project)`, which upserts the returned project into `dash.data.projects` via `dash.setData`.
+
+---
+
+## Error state
+
+When `dash.err` is set (populated by the `useFetch` hook when the API returns a non-2xx response), a red alert banner is rendered at the top of the authenticated view:
+
+```jsx
+// src/pages/DashboardPage.jsx
+{dash.err && (
+    <div className="rounded-xl bg-red-500 text-white p-4 animate-shake flex items-center gap-3 shadow-lg">
+        <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
+        <p className="text-xs font-bold tracking-wider">
+            Anomalía de Red Detectada: {dash.err.message || "Error Crítico"} (Cod: {dash.err.status || "401"})
+        </p>
+    </div>
+)}
+```
+
+The banner displays the error message and status code from `dash.err`. To simulate an error in development, call `window.setSimulatedError(503)` from the browser console. To restore normal operation, call `window.setSimulatedError(null)`.

@@ -1,0 +1,150 @@
+---
+title: "useUsers"
+description: "Users data fetching hook wrapping the external API client."
+---
+
+`useUsers` fetches user data from the external JSONPlaceholder API via [`apiClient`](/api/api-client). It manages its own loading/error/data state independently of `useFetch`, and listens for the `apm:api_status` event to re-fetch when the simulated error state changes.
+
+## Signature
+
+```js
+useUsers()
+```
+
+## Source code
+
+<Accordion title="useUsers.js — full source">
+
+```js hooks/useUsers.js
+import { useState, useCallback, useEffect } from "react";
+import { apiClient } from "../services/apiClient";
+
+export function useUsers() {
+    const [users, setUsers] = useState([]);
+    const [posts, setPosts] = useState([]);
+    const [comments, setComments] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const fetchUsers = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        if (window.SIMULATE_ERROR) setUsers([]);
+        try {
+            const data = await apiClient.getUsers();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            setUsers(data);
+        } catch (err) {
+            setUsers([]);
+            const msg = err.status === 404 ? "Usuario no encontrado" :
+                err.status === 401 ? "Sesión no autorizada" :
+                    (err.message || "Falla de auditoría de red");
+            setError({
+                status: err.status || 500,
+                message: msg
+            });
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        const handleStatus = (e) => {
+            if (e.detail.code !== 200) setUsers([]);
+            fetchUsers();
+        };
+        window.addEventListener("apm:api_status", handleStatus);
+        return () => window.removeEventListener("apm:api_status", handleStatus);
+    }, [fetchUsers]);
+
+    const fetchUserPosts = useCallback(async (userId) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await apiClient.getUserPosts(userId);
+            setPosts(data);
+        } catch (err) {
+            setError({ status: err.status || 500, message: err.message || "Error al cargar posts" });
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    const fetchPostComments = useCallback(async (postId) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await apiClient.getPostComments(postId);
+            setComments(data);
+        } catch (err) {
+            setError({ status: err.status || 500, message: err.message || "Error al cargar comentarios" });
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    return {
+        users,
+        posts,
+        comments,
+        loading,
+        error,
+        fetchUsers,
+        fetchUserPosts,
+        fetchPostComments,
+        clearError: () => setError(null)
+    };
+}
+```
+
+</Accordion>
+
+## Return value
+
+<ResponseField name="users" type="User[]">
+  Array of User objects fetched from JSONPlaceholder. Empty array before the first fetch or after an error.
+</ResponseField>
+
+<ResponseField name="posts" type="Post[]">
+  Array of Post objects for the most recently fetched user. Empty until `fetchUserPosts` is called.
+</ResponseField>
+
+<ResponseField name="comments" type="Comment[]">
+  Array of Comment objects for the most recently fetched post. Empty until `fetchPostComments` is called.
+</ResponseField>
+
+<ResponseField name="loading" type="boolean">
+  `true` while any of the three fetch functions is in flight.
+</ResponseField>
+
+<ResponseField name="error" type="{ status: number, message: string } | null">
+  The most recent fetch error, normalized with a human-readable message. Status-specific messages:
+  - `404` → `"Usuario no encontrado"`
+  - `401` → `"Sesión no autorizada"`
+  - anything else → the raw `err.message`, or `"Falla de auditoría de red"` as a fallback
+</ResponseField>
+
+<ResponseField name="fetchUsers" type="() => Promise<void>">
+  `useCallback`-wrapped function that calls `apiClient.getUsers()`. Adds a 1000 ms artificial delay after the response before setting state. If `window.SIMULATE_ERROR` is set at call time, clears `users` immediately before the request.
+</ResponseField>
+
+<ResponseField name="fetchUserPosts" type="(userId: number) => Promise<void>">
+  Fetches posts for the given user ID via `apiClient.getUserPosts(userId)` and stores the result in `posts`.
+</ResponseField>
+
+<ResponseField name="fetchPostComments" type="(postId: number) => Promise<void>">
+  Fetches comments for the given post ID via `apiClient.getPostComments(postId)` and stores the result in `comments`.
+</ResponseField>
+
+<ResponseField name="clearError" type="() => void">
+  Clears the `error` state by setting it to `null`.
+</ResponseField>
+
+## `apm:api_status` event
+
+The hook registers a listener on `window` for the `apm:api_status` CustomEvent. When the event fires:
+
+- If `e.detail.code !== 200` (i.e. an error is being simulated), `users` is cleared immediately.
+- `fetchUsers()` is called regardless of the code, so the UI reflects the current simulated state.
+
+This mirrors the behavior in [`useFetch`](/api/hooks/use-fetch#apmapistatus-event-listener) but is implemented manually since `useUsers` does not use `useFetch`.

@@ -1,0 +1,251 @@
+---
+title: "HTTP Client"
+description: "Guide to the centralized HTTP client and service layer in APM Enterprise."
+---
+
+All network requests in APM Enterprise pass through a single `httpClient` object. No page or hook calls `window.fetch` directly. This centralizes authentication, error handling, and the base URL in one place.
+
+## Overview
+
+The centralized client provides three benefits:
+
+- **Single auth injection** — every request automatically includes the `Authorization: Bearer <token>` header via `getHeaders()`
+- **Single error handling** — `handleResponse` parses error payloads and throws a typed `Error` with a `.status` property
+- **Single base URL** — `BASE_URL` is defined once; all service functions pass only the path
+
+<Warning>
+`BASE_URL` is set to `https://api.apm-enterprise.com/v1`, which is a production-style domain that does not exist as a real server. All requests to this domain are intercepted by `mockServer.js` before they leave the browser. See the [mock server section](#mock-server) below.
+</Warning>
+
+---
+
+## Configuration
+
+```js
+const BASE_URL = "https://api.apm-enterprise.com/v1";
+```
+
+The default `Authorization` header uses the hardcoded `"demo-token"` value. Service functions override this header by passing a `token` from the calling hook:
+
+```js
+const getHeaders = (extraHeaders = {}) => ({
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer demo-token',
+    ...extraHeaders,
+});
+```
+
+Any key in `extraHeaders` overrides the matching default — so passing `{ Authorization: 'Bearer <token>' }` replaces the hardcoded value for that request.
+
+---
+
+## Available methods
+
+| Method | Signature | Description |
+|---|---|---|
+| `get` | `get(endpoint, options)` | GET request; no body |
+| `post` | `post(endpoint, data, options)` | POST request; body JSON-serialized from `data` |
+| `put` | `put(endpoint, data, options)` | PUT request; body JSON-serialized from `data` |
+| `patch` | `patch(endpoint, data, options)` | PATCH request; body JSON-serialized from `data` |
+| `delete` | `delete(endpoint, options)` | DELETE request; no body |
+
+All methods accept an `options` object. The only option currently used is `options.headers`, which is spread into `getHeaders()` to override or extend the default headers.
+
+---
+
+## Error handling
+
+Every method passes the raw `Response` object to `handleResponse`:
+
+```js
+async function handleResponse(response) {
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const error = new Error(errorData.message || "Error de comunicación con el servidor");
+        error.status = response.status;
+        throw error;
+    }
+    return response.json();
+}
+```
+
+If the response is not OK (`status >= 400`), `handleResponse` attempts to parse the JSON body for a `message` field and throws an `Error` with:
+- `.message` — from the response JSON, or a fallback string
+- `.status` — the HTTP status code
+
+`useFetch` catches this error and stores it as `{ message, status }` in its `error` state. `useUsers` reads the `status` to provide localized error messages.
+
+---
+
+## Header injection
+
+The `getHeaders()` function merges the defaults with any caller-provided headers:
+
+```js
+const getHeaders = (extraHeaders = {}) => ({
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer demo-token',
+    ...extraHeaders,
+});
+```
+
+This spread pattern means any key in `extraHeaders` wins. Service functions use it to inject the live token from the hook:
+
+```js
+await httpClient.get("/dashboard", {
+    headers: { Authorization: `Bearer ${token}` }
+});
+```
+
+---
+
+## Service layer
+
+`api.js` exports thin wrapper functions that call `httpClient` with the correct path, method, and auth token. All functions add a 1 000 ms artificial delay for `apiGetDashboard` to simulate realistic network latency in development.
+
+```js
+import { httpClient } from "./httpClient";
+
+export async function apiGetDashboard({ token }) {
+    const response = await httpClient.get("/dashboard", {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    return response;
+}
+
+export async function apiCreateProject({ token, payload }) {
+    return httpClient.post("/projects", payload, {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+}
+
+export async function apiToggleProjectStatus({ token, id }) {
+    return httpClient.patch(`/projects/${id}/toggle`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+}
+
+export async function apiUpdateProject({ token, id, payload }) {
+    return httpClient.put(`/projects/${id}`, payload, {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+}
+```
+
+| Function | Method | Path | Description |
+|---|---|---|---|
+| `apiGetDashboard` | GET | `/dashboard` | Fetch `{ me, stats, projects }` |
+| `apiCreateProject` | POST | `/projects` | Create a new project |
+| `apiToggleProjectStatus` | PATCH | `/projects/:id/toggle` | Toggle a project's active/paused status |
+| `apiUpdateProject` | PUT | `/projects/:id` | Replace a project's fields |
+
+---
+
+## External API client
+
+User data is fetched from the JSONPlaceholder public API through a separate `apiClient` object, distinct from `httpClient`. This client targets `https://jsonplaceholder.typicode.com` and does not use Bearer authentication.
+
+`useUsers` calls these methods:
+
+| Method | Description |
+|---|---|
+| `apiClient.getUsers()` | Fetch all users |
+| `apiClient.getUserPosts(userId)` | Fetch posts for a specific user |
+| `apiClient.getPostComments(postId)` | Fetch comments for a specific post |
+
+The mock server allows JSONPlaceholder requests to pass through to the real network (it uses `originalFetch` for those URLs) and logs the first five records to the browser console.
+
+---
+
+## Mock server
+
+`mockServer.js` replaces `window.fetch` with an interceptor at startup. The interceptor runs before any real network request is made.
+
+<Note>
+The mock server intercept pattern works by saving a reference to the native `window.fetch` as `originalFetch`, then overwriting `window.fetch` with a custom function. All `fetch` calls in the app — including those inside `httpClient` — automatically use the mock. Requests to `api.apm-enterprise.com` are handled entirely in memory. Requests to `jsonplaceholder.typicode.com` are forwarded to the real network via `originalFetch`.
+</Note>
+
+The interceptor handles the following routes:
+
+| Route | Response |
+|---|---|
+| `GET /dashboard` | Returns `{ me, stats, projects }` from the in-memory `fakeDb` |
+| `POST /projects` | Appends a new project to `fakeDb.projects` and returns it with a generated ID |
+| `PATCH /projects/:id/toggle` | Forwarded to `originalFetch` (not yet fully handled in mock) |
+| Any other enterprise route | Forwarded to `originalFetch` |
+
+Every intercepted request is logged to the browser console inside a `console.group` block with emoji prefixes (`📡`, `📦`, `✅`, `🚨`).
+
+### Full httpClient source
+
+<AccordionGroup>
+  <Accordion title="httpClient.js source code">
+
+```js
+const BASE_URL = "https://api.apm-enterprise.com/v1";
+
+async function handleResponse(response) {
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const error = new Error(errorData.message || "Error de comunicación con el servidor");
+        error.status = response.status;
+        throw error;
+    }
+    return response.json();
+}
+
+const getHeaders = (extraHeaders = {}) => ({
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer demo-token',
+    ...extraHeaders,
+});
+
+export const httpClient = {
+    async get(endpoint, options = {}) {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'GET',
+            headers: getHeaders(options.headers),
+        });
+        return handleResponse(response);
+    },
+
+    async post(endpoint, data, options = {}) {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'POST',
+            headers: getHeaders(options.headers),
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+
+    async put(endpoint, data, options = {}) {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'PUT',
+            headers: getHeaders(options.headers),
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+
+    async patch(endpoint, data, options = {}) {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'PATCH',
+            headers: getHeaders(options.headers),
+            body: JSON.stringify(data),
+        });
+        return handleResponse(response);
+    },
+
+    async delete(endpoint, options = {}) {
+        const response = await fetch(`${BASE_URL}${endpoint}`, {
+            method: 'DELETE',
+            headers: getHeaders(options.headers),
+        });
+        return handleResponse(response);
+    }
+};
+```
+
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,189 @@
+---
+title: "Error Simulation"
+description: "Guide to the built-in API engineering panel and error simulation system in APM Enterprise."
+---
+
+APM Enterprise includes a built-in error injection system that lets you trigger HTTP error codes globally and observe how every part of the application responds — without modifying any source code or configuring a proxy.
+
+## Overview
+
+The error simulation system is designed for three use cases:
+
+- **QA** — verify that every error state renders correctly before deploying
+- **Demo** — show stakeholders the full error handling behavior live in the browser
+- **Architecture validation** — confirm that the event-driven data refresh and modal system work end-to-end
+
+The system works by setting a global `window.SIMULATE_ERROR` flag that `mockServer.js` checks on every intercepted request. Changing the flag dispatches a `apm:api_status` CustomEvent that the entire application listens for.
+
+---
+
+## Accessing the panel
+
+The engineering panel is embedded in the sidebar under the label **Control de Red** (Ingeniería API section). To use it:
+
+<Steps>
+  <Step title="Expand the sidebar">
+    Make sure the sidebar is not collapsed. Click the expand arrow at the bottom of the sidebar if it is collapsed — the panel is hidden when the sidebar is in its narrow state.
+  </Step>
+  <Step title="Click Control de Red">
+    Click anywhere on the **Control de Red** section in the sidebar navigation. The panel expands to show three error code buttons and a restore button.
+  </Step>
+  <Step title="Click an error code button">
+    Click **500**, **401**, or **404** to inject that error code. The app responds immediately.
+  </Step>
+  <Step title="Restore normal operation">
+    Click **Restaurar (200)** to clear the simulated error and return all data fetching to normal.
+  </Step>
+</Steps>
+
+---
+
+## Available error codes
+
+| Code | Label | Modal color | Effect |
+|---|---|---|---|
+| `500` | CORE FAIL | Red | Shows red critical-failure modal; clears all project and stats tables |
+| `401` | AUTH FAIL | Violet | Shows violet unauthorized modal; clears cached data |
+| `404` | NOT FOUND | Blue | Shows blue not-found modal; renders empty state in all lists |
+
+---
+
+## Restoring to 200
+
+Click the **Restaurar (200)** button in the sidebar panel, or call from the browser console:
+
+```js
+window.setSimulatedError(null)
+```
+
+This clears `window.SIMULATE_ERROR`, dispatches an `apm:api_status` event with `code: 200`, and triggers a fresh data fetch across all active hooks. A green "Protocolo Restablecido" modal appears and auto-dismisses after 2.5 seconds.
+
+---
+
+## Using the API programmatically
+
+You can trigger any error code from the browser DevTools console without using the sidebar UI:
+
+```js
+// Trigger a 500 server error
+window.setSimulatedError(500)
+
+// Trigger a 401 unauthorized error
+window.setSimulatedError(401)
+
+// Trigger a 404 not found error
+window.setSimulatedError(404)
+
+// Restore to normal 200 operation
+window.setSimulatedError(null)
+```
+
+---
+
+## How it works internally
+
+### 1. Setting the global flag
+
+`window.setSimulatedError` sets `window.SIMULATE_ERROR` and dispatches a CustomEvent:
+
+```js
+window.setSimulatedError = (code) => {
+    window.SIMULATE_ERROR = code;
+    const msg = code ? `Inyección código ${code}` : "Restaurado Protocolo 200";
+    console.log(`🛠️ Control API: ${msg}`);
+
+    const event = new CustomEvent("apm:api_status", { detail: { code: code || 200, message: msg } });
+    window.dispatchEvent(event);
+};
+```
+
+### 2. Mock server intercept
+
+Every time `httpClient` calls `fetch`, `mockServer.js` intercepts it. If `window.SIMULATE_ERROR` is set, the interceptor returns an error response immediately without reaching any route handler:
+
+```js
+if (window.SIMULATE_ERROR) {
+    await sleep(500);
+    const errCode = window.SIMULATE_ERROR;
+    console.error(`🚨 Anomalía Detectada: ${errCode}`);
+    console.groupEnd();
+    return new Response(
+        JSON.stringify({ error: true, status: errCode, message: "Falla de Auditoría del Sistema" }),
+        { status: errCode, headers: { "Content-Type": "application/json" } }
+    );
+}
+```
+
+The 500ms `sleep` call gives the loading state time to appear in the UI before the error arrives.
+
+### 3. useFetch re-execution
+
+`useFetch` listens for `apm:api_status` and calls `execute()` when it fires:
+
+```js
+useEffect(() => {
+    const handleStatus = (e) => {
+        if (autoExecute) {
+            execute();
+        }
+    };
+    window.addEventListener("apm:api_status", handleStatus);
+    return () => window.removeEventListener("apm:api_status", handleStatus);
+}, [execute, autoExecute]);
+```
+
+This ensures every active `useFetch` instance re-fetches after the error code changes — so the entire app updates simultaneously.
+
+### 4. App.jsx error modal listener
+
+`App.jsx` has its own listener for `apm:api_status` that drives the `ErrorModal` component. It resets the modal state first (setting `isOpen: false`) and then sets it again after a 50ms timeout, which forces React to re-mount the modal animation even if the same error code is triggered twice:
+
+```js
+useEffect(() => {
+    const handleApiStatus = (e) => {
+        const { code, message } = e.detail;
+        setErrorModal({ isOpen: false, code: null, message: "" });
+        setTimeout(() => {
+            setErrorModal({ isOpen: true, code, message });
+        }, 50);
+    };
+    window.addEventListener("apm:api_status", handleApiStatus);
+    return () => window.removeEventListener("apm:api_status", handleApiStatus);
+}, []);
+```
+
+---
+
+## ErrorModal behavior
+
+The `ErrorModal` component renders as a fixed bottom-right toast. It is color-coded by error code:
+
+| Code | Background | Label |
+|---|---|---|
+| `200` | Emerald | Protocolo Restablecido |
+| `401` | Violet | Acceso no Autorizado |
+| `404` | Blue | Recurso no Encontrado |
+| `500` | Red | Falla Crítica del Sistema |
+| other | Amber | Aviso de Auditoría |
+
+For code `200`, the modal auto-dismisses after 2.5 seconds and shows a progress bar that shrinks to zero as the timer elapses. All other codes remain visible until the user dismisses them manually.
+
+---
+
+## Network console logging
+
+`mockServer.js` wraps every intercepted request in a `console.group` block. You can see the full network trace in the browser DevTools console:
+
+| Prefix | Meaning |
+|---|---|
+| `📡 APM Network: METHOD URL` | Opening group — every request |
+| `📦 Portafolio Sync:` | Dashboard GET — followed by `console.table` of projects |
+| `✅ Activo Vinculado:` | Project POST — followed by `console.table` of new project |
+| `📋 Auditoría Externa:` | JSONPlaceholder response — first 5 rows |
+| `🚨 Anomalía Detectada: <code>` | Error simulation active |
+| `⚠️ Seguridad Enterprise: Token Inválido` | Auth header missing or wrong |
+| `❌ Fallo Crítico en Interceptor:` | Unexpected exception in the interceptor itself |
+
+<Note>
+All network logging happens in `mockServer.js` inside `console.group` / `console.groupEnd` blocks. Open the DevTools console and expand any `📡 APM Network` group to see the full request details and response payload.
+</Note>

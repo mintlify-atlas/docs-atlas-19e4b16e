@@ -1,0 +1,122 @@
+---
+title: "API Client (External)"
+description: "Client for the external JSONPlaceholder API used for the Users module."
+---
+
+`apiClient` calls the public [JSONPlaceholder](https://jsonplaceholder.typicode.com) REST API to power the Users module. Unlike [`httpClient`](/api/http-client), these requests bypass the Enterprise auth system and use the browser's native `fetch` directly.
+
+<Note>
+  These requests are **not** intercepted by [`mockServer.js`](/api/mock-server) in any meaningful way. The mock server passes all `jsonplaceholder.typicode.com` URLs straight through to the real network after logging a preview table to the console.
+</Note>
+
+## JSONPlaceholder User shape
+
+```js
+// User type (from JSONPlaceholder)
+{
+  id: number,
+  name: string,
+  username: string,
+  email: string,
+  website: string,
+  company: {
+    name: string,
+    bs: string
+  }
+  // ...additional fields omitted for brevity
+}
+```
+
+## Source code
+
+```js services/apiClient.js
+import { httpClient } from "./httpClient";
+
+const USERS_BASE_URL = "https://jsonplaceholder.typicode.com";
+
+export const apiClient = {
+    async getUsers() {
+        try {
+            const response = await fetch(`${USERS_BASE_URL}/users`);
+            if (!response.ok) {
+                const error = new Error("Error al obtener usuarios");
+                error.status = response.status;
+                throw error;
+            }
+            const data = await response.json();
+            console.log("Users Data:", data);
+            return data;
+        } catch (err) {
+            throw err;
+        }
+    },
+
+    async getUserPosts(userId) {
+        const response = await fetch(`${USERS_BASE_URL}/posts?userId=${userId}`);
+        if (!response.ok) throw new Error("Error al obtener posts");
+        const data = await response.json();
+        console.log(`Posts (User ${userId}):`, data);
+        return data;
+    },
+
+    async getPostComments(postId) {
+        const response = await fetch(`${USERS_BASE_URL}/comments?postId=${postId}`);
+        if (!response.ok) throw new Error("Error al obtener comentarios");
+        const data = await response.json();
+        console.log(`Comments (Post ${postId}):`, data);
+        return data;
+    }
+};
+```
+
+## Methods
+
+### `apiClient.getUsers()`
+
+Fetches all users from JSONPlaceholder.
+
+<Tip>
+  On success, the raw response array is logged to the browser console as `"Users Data:"`.
+</Tip>
+
+**Returns**
+
+<ResponseField name="Promise<User[]>" type="Promise<User[]>">
+  Array of User objects from JSONPlaceholder. Throws an `Error` with `.status` on non-2xx responses.
+</ResponseField>
+
+---
+
+### `apiClient.getUserPosts(userId)`
+
+Fetches all posts authored by a specific user.
+
+**Parameters**
+
+<ParamField path="userId" type="number" required>
+  The numeric ID of the user whose posts to retrieve. Appended as `?userId={userId}` to the posts endpoint.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="Promise<Post[]>" type="Promise<Post[]>">
+  Array of Post objects. Each post contains `id`, `userId`, `title`, and `body`. Throws an `Error` on non-2xx responses.
+</ResponseField>
+
+---
+
+### `apiClient.getPostComments(postId)`
+
+Fetches all comments for a specific post.
+
+**Parameters**
+
+<ParamField path="postId" type="number" required>
+  The numeric ID of the post whose comments to retrieve. Appended as `?postId={postId}` to the comments endpoint.
+</ParamField>
+
+**Returns**
+
+<ResponseField name="Promise<Comment[]>" type="Promise<Comment[]>">
+  Array of Comment objects. Each comment contains `id`, `postId`, `name`, `email`, and `body`. Throws an `Error` on non-2xx responses.
+</ResponseField>

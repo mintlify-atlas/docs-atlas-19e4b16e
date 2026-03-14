@@ -1,0 +1,145 @@
+---
+title: "useFetch"
+description: "Generic async data-fetching hook with AbortController and event-driven re-execution."
+---
+
+`useFetch` is the foundational data-fetching primitive used throughout APM Enterprise. It wraps an async function, manages loading/error/data state, cancels in-flight requests when a new one starts, and re-executes automatically when the `apm:api_status` event fires.
+
+## Signature
+
+```js
+useFetch(fetchFn, autoExecute = true, deps = [])
+```
+
+## Source code
+
+<Accordion title="useFetch.js — full source">
+
+```js hooks/useFetch.js
+import { useState, useEffect, useCallback, useRef } from "react";
+
+export function useFetch(fetchFn, autoExecute = true, deps = []) {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const abortControllerRef = useRef(null);
+
+    const execute = useCallback(async (...args) => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+
+        abortControllerRef.current = new AbortController();
+
+        setLoading(true);
+        setError(null);
+
+        try {
+            const result = await fetchFn(...args);
+            setData(result);
+            return result;
+        } catch (err) {
+            if (err.name === "AbortError") return;
+            setData(null);
+            setError({ message: err.message || "Error", status: err.status || 0 });
+            throw err;
+        } finally {
+            setLoading(false);
+        }
+    }, [fetchFn]);
+
+    useEffect(() => {
+        const handleStatus = (e) => {
+            if (autoExecute) {
+                execute();
+            }
+        };
+        window.addEventListener("apm:api_status", handleStatus);
+        return () => window.removeEventListener("apm:api_status", handleStatus);
+    }, [execute, autoExecute]);
+
+    useEffect(() => {
+        if (autoExecute) {
+            execute();
+        }
+
+        return () => {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+        };
+    }, deps);
+
+    return { data, loading, error, execute, setData, setError };
+}
+```
+
+</Accordion>
+
+## Parameters
+
+<ParamField path="fetchFn" type="() => Promise<T>" required>
+  The async function to execute. It is called with no arguments by the internal auto-execute logic, but `execute` forwards any arguments passed to it directly to `fetchFn`.
+</ParamField>
+
+<ParamField path="autoExecute" type="boolean" default="true">
+  When `true`, the hook calls `execute()` immediately on mount and whenever the `deps` array changes. Set to `false` to require a manual call to `execute`.
+</ParamField>
+
+<ParamField path="deps" type="array" default="[]">
+  Dependency array for the auto-execution `useEffect`. Works the same as the second argument to `useEffect`. Changes to these values trigger a fresh call to `fetchFn`.
+</ParamField>
+
+## Return value
+
+<ResponseField name="data" type="T | null">
+  The resolved value returned by the last successful `fetchFn` call. `null` before the first successful fetch or after an error.
+</ResponseField>
+
+<ResponseField name="loading" type="boolean">
+  `true` while `fetchFn` is in flight; `false` otherwise.
+</ResponseField>
+
+<ResponseField name="error" type="{ message: string, status: number } | null">
+  The normalized error from the last failed call. `null` when no error has occurred or after `execute` is called again. `status` defaults to `0` if the thrown error has no `.status`.
+</ResponseField>
+
+<ResponseField name="execute" type="(...args: any[]) => Promise<T>">
+  Manually trigger a fetch. Aborts any in-flight request before starting a new one. All arguments are forwarded to `fetchFn`.
+</ResponseField>
+
+<ResponseField name="setData" type="React.Dispatch">
+  Direct state setter for `data`. Useful for optimistic updates — set the new value immediately before the API call confirms.
+</ResponseField>
+
+<ResponseField name="setError" type="React.Dispatch">
+  Direct state setter for `error`. Use to clear or override the error state from outside the hook.
+</ResponseField>
+
+## AbortController pattern
+
+Each call to `execute` creates a new `AbortController` and aborts any previous controller. This prevents stale responses from overwriting state when rapid re-fetches occur (e.g. fast dep changes or repeated user actions). `AbortError` exceptions are silently ignored.
+
+## `apm:api_status` event listener
+
+The hook listens for the `apm:api_status` CustomEvent dispatched by [`window.setSimulatedError`](/api/mock-server#global-api). When the event fires and `autoExecute` is `true`, the hook calls `execute()` automatically. This keeps all active hooks in sync whenever the simulated error state changes.
+
+## Usage example
+
+The following shows how `useDashboard` uses `useFetch` to load dashboard data, enabling auto-execution only when a token is present:
+
+```js
+const {
+  data,
+  loading,
+  error: err,
+  execute: load,
+  setData,
+  setError: setErr
+} = useFetch(() => apiGetDashboard({ token }), !!token, [token]);
+```
+
+- `fetchFn` — a closure that captures the current `token`.
+- `autoExecute` — `!!token` ensures the hook does not fire when the user is logged out.
+- `deps` — `[token]` re-triggers the fetch whenever the token changes.

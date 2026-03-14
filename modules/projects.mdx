@@ -1,0 +1,193 @@
+---
+title: "Projects"
+description: "Full project inventory with pagination, status filtering, and CRUD operations for the APM Enterprise engineering portfolio."
+---
+
+## Overview
+
+The Projects module provides a dedicated, full-page view of the complete project inventory. Unlike the Dashboard's abbreviated project list (capped at 5 items with no pagination), this module exposes the full dataset with:
+
+- Paginated browsing (5 projects per page)
+- Status filtering
+- A detailed project inspection view
+- Inline project creation and editing via the `useProjectForm` hook
+
+The module fetches data from the `/dashboard` endpoint and manages its own local state, operating independently of the Dashboard module.
+
+---
+
+## Project list
+
+The main view renders the project inventory as a paginated `ProjectList` component inside a card.
+
+**Controls in the header:**
+- **Status filter** — `<Select>` with options: Todo (`all`), Activos (`active`), En Pausa (`paused`). Changing the filter resets the page to 1.
+- **Actualizar button** — Calls `loadData()` to re-fetch from the API. Disabled while loading; shows a spinning `RefreshCw` icon when active.
+
+The data load sequence:
+
+```js
+// src/pages/ProjectsPage.jsx
+const loadData = async () => {
+    setLoading(true);
+    setError(null);
+    if (window.SIMULATE_ERROR) setProjects([]);
+    try {
+        const res = await httpClient.get("/dashboard");
+        await new Promise(r => setTimeout(r, 1000));
+        if (res && res.projects) {
+            setProjects(res.projects);
+        }
+    } catch (e) {
+        setProjects([]);
+        const msg = e.status === 404 ? "Proyecto no encontrado" :
+            e.status === 401 ? "Sesión no autorizada" :
+                (e.message || "Falla de auditoría de red");
+        setError({
+            status: e.status || 500,
+            message: msg
+        });
+    } finally {
+        setLoading(false);
+    }
+};
+```
+
+`loadData` is called once on mount via `useEffect` and also re-invoked whenever the `apm:api_status` window event fires.
+
+<Note>
+Both the Projects module and the Users module subscribe to the `apm:api_status` custom event. When `window.setSimulatedError()` is called from the browser console, all active modules reload simultaneously.
+</Note>
+
+---
+
+## Project detail view
+
+Clicking the **Inspeccionar** button in a project row calls `setSelectedProject(proj)`, replacing the list view with a two-column detail layout.
+
+**Left column — project card** (sticky, `top-28`):
+- Avatar: first letter of the project name in a rounded square
+- Project name and owner
+- Budget (formatted via `money()`)
+- Responsable
+- Status badge (green for `active`, amber for `paused`)
+- **Editar Proyecto** button — returns to the list and pre-fills the form
+
+**Right column — Ficha Técnica card:**
+
+| Field | Description |
+|---|---|
+| ID | Internal project identifier (monospace) |
+| Nombre | Project name |
+| Lider | Project owner/lead |
+| Presupuesto | Budget in PEN, formatted as currency |
+| Estado | Status badge |
+
+A **Volver al Listado** back button in the top-left returns to the paginated list.
+
+---
+
+## Create project
+
+Below the project list, a **Nuevo Registro de Proyecto** form is always visible. It is powered by the `useProjectForm` hook, initialized with a static `"demo-token"`.
+
+**Form fields:**
+
+| Field | Label | Type | Validation |
+|---|---|---|---|
+| `name` | Nombre del Proyecto | Text | Minimum 3 characters |
+| `owner` | Líder / Dueño | Text | Minimum 2 characters |
+| `budget` | Presupuesto | Number | Must be a valid number |
+| `status` | Estado | Select (`active` / `paused`) | — |
+
+On submit, `form.onAction` calls `apiCreateProject` with the form values. The returned project is prepended to the local `projects` state via the `onProjectCreated` callback.
+
+The submit button shows:
+- **Generar Proyecto** — in create mode
+- **Guardar Cambios** — in edit mode
+- **Procesando...** (disabled) — while the API call is in-flight
+
+---
+
+## Edit project
+
+Editing is initiated from two entry points:
+1. The **Inspeccionar** detail view — clicking **Editar Proyecto** calls `setSelectedProject(null)` and then `form.prepareEdit(selectedProject)`.
+2. The **Editar** action available in each `ProjectList` row.
+
+`prepareEdit` populates the form with the project's current values:
+
+```js
+// src/hooks/useProjectForm.js
+const prepareEdit = (project) => {
+    setEditingId(project.id);
+    setValues({
+        name: project.name,
+        owner: project.owner,
+        budget: String(project.budget),
+        status: project.status
+    });
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+};
+```
+
+The page scrolls to the bottom to bring the form into view. A **Cancelar Edición** button appears next to the form title; clicking it calls `form.cancelEdit()`, which clears `editingId` and resets all fields.
+
+---
+
+## Error handling
+
+When `loadData` catches a network or API error, it populates the `error` state with a normalized object containing `status` and `message`.
+
+```jsx
+// src/pages/ProjectsPage.jsx
+{error && (
+    <div className="p-6 rounded-3xl bg-red-500 text-white border border-red-600 flex items-center gap-4 animate-shake shadow-lg">
+        <div className="h-10 w-10 rounded-xl bg-white/20 flex items-center justify-center text-white">
+            <AlertCircle size={20} />
+        </div>
+        <div>
+            <p className="text-[11px] font-black uppercase tracking-widest">Inconsistencia de Red</p>
+            <p className="text-xs font-bold opacity-80">Código de Respuesta: {error.status || '503'}</p>
+        </div>
+    </div>
+)}
+```
+
+The banner appears directly above the project list card and shakes on entry.
+
+<AccordionGroup>
+  <Accordion title="Error code reference">
+
+  | HTTP status | Message displayed |
+  |---|---|
+  | `401` | Sesión no autorizada |
+  | `404` | Proyecto no encontrado |
+  | Any other | Falla de auditoría de red (or the raw `e.message`) |
+  | No status | Defaults to `500` in the error state object |
+
+  To trigger an error in development, run `window.setSimulatedError(503)` in the browser console. The `apm:api_status` event will fire, `loadData` will be called, and the mock server will return a 503 response, populating the error banner.
+
+  Restore normal operation with `window.setSimulatedError(null)`.
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Pagination
+
+The project list is paginated at 5 items per page. The current page and total pages are displayed as **Página X de Y** in the footer of the list card.
+
+**Navigation controls:**
+- **ChevronLeft** button — decrements the page. Disabled when `page === 1`.
+- **ChevronRight** button — increments the page. Disabled when `page === totalPages`.
+
+When the status filter is changed, the page resets to 1 automatically. If the current page exceeds `totalPages` after a filter change (e.g. filtering reduces the dataset), a `useEffect` resets the page to 1.
+
+`totalPages` is calculated as:
+
+```js
+const totalPages = Math.ceil(filtered.length / pageSize) || 1;
+const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
+```

@@ -1,0 +1,700 @@
+---
+title: "Custom Hooks"
+description: "Guide to the custom React hooks that power APM Enterprise's business logic layer."
+---
+
+APM Enterprise separates all async state management and business logic into custom hooks. Pages never call `fetch` directly — they consume hooks that abstract loading states, error handling, and data transformations.
+
+## Overview
+
+| Hook | Purpose |
+|---|---|
+| `useFetch` | Core data-fetching primitive with abort support |
+| `useForm` | Generic controlled-form state and validation |
+| `useToggle` | Simple boolean state with stable callbacks |
+| `useDashboard` | Composed hook for the dashboard page |
+| `useProjectForm` | Project create/edit form with API calls |
+| `useUsers` | Users data from the external audit API |
+
+---
+
+## useFetch
+
+`useFetch` is the foundational data-fetching hook used across all pages that need async data. It manages loading, error, and data state, and wires up request cancellation via `AbortController`.
+
+**Signature**
+
+```js
+useFetch(fetchFn, autoExecute = true, deps = [])
+```
+
+**Returns**
+
+| Property | Type | Description |
+|---|---|---|
+| `data` | `any \| null` | The resolved value from `fetchFn` |
+| `loading` | `boolean` | `true` while the request is in flight |
+| `error` | `{ message, status } \| null` | Set on rejection (not on abort) |
+| `execute` | `function` | Manually trigger the fetch |
+| `setData` | `function` | Directly update `data` in state |
+| `setError` | `function` | Directly update `error` in state |
+
+**Key features**
+
+- Creates a new `AbortController` on every call to `execute`, aborting any pending prior request
+- Listens for the `apm:api_status` CustomEvent and re-executes when it fires (used by the error simulation system)
+- Auto-executes on mount and re-executes when any value in `deps` changes
+- Silently swallows `AbortError` — it does not set an error state for cancelled requests
+
+<Tip>
+Use `useFetch` any time you need to call a service function and track its loading and error state. Pass `autoExecute = false` if you need to trigger the fetch manually at a specific time.
+</Tip>
+
+<AccordionGroup>
+  <Accordion title="useFetch source code">
+
+```js
+import { useState, useEffect, useCallback, useRef } from "react";
+
+export function useFetch(fetchFn, autoExecute = true, deps = []) {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const abortControllerRef = useRef(null);
+
+    const execute = useCallback(async (...args) => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+
+        abortControllerRef.current = new AbortController();
+
+        setLoading(true);
+        setError(null);
+
+        try {
+            const result = await fetchFn(...args);
+            setData(result);
+            return result;
+        } catch (err) {
+            if (err.name === "AbortError") return;
+            setData(null);
+            setError({ message: err.message || "Error", status: err.status || 0 });
+            throw err;
+        } finally {
+            setLoading(false);
+        }
+    }, [fetchFn]);
+
+    useEffect(() => {
+        const handleStatus = (e) => {
+            if (autoExecute) {
+                execute();
+            }
+        };
+        window.addEventListener("apm:api_status", handleStatus);
+        return () => window.removeEventListener("apm:api_status", handleStatus);
+    }, [execute, autoExecute]);
+
+    useEffect(() => {
+        if (autoExecute) {
+            execute();
+        }
+
+        return () => {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+        };
+    }, deps);
+
+    return { data, loading, error, execute, setData, setError };
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+**Usage in `useDashboard`**
+
+`useDashboard` passes `apiGetDashboard` as the fetch function and sets `deps` to `[token]` so the fetch re-runs whenever the token changes:
+
+```js
+const {
+    data,
+    loading,
+    error: err,
+    execute: load,
+    setData,
+    setError: setErr
+} = useFetch(() => apiGetDashboard({ token }), !!token, [token]);
+```
+
+Passing `!!token` as `autoExecute` means the hook only auto-executes when a token is present — preventing an unauthenticated fetch on the login screen.
+
+---
+
+## useForm
+
+`useForm` provides controlled form state with optional inline validation. It is a generic hook that works with any set of field names.
+
+**Signature**
+
+```js
+useForm(initialValues = {}, validate)
+```
+
+**Returns**
+
+| Property | Type | Description |
+|---|---|---|
+| `values` | `object` | Current form field values |
+| `errors` | `object` | Per-field validation errors |
+| `isSubmitting` | `boolean` | `true` while the submit callback is running |
+| `onChange` | `(name, value) => void` | Update a single field and run inline validation |
+| `reset` | `() => void` | Restore all fields and errors to initial state |
+| `onSubmit` | `(e, callback) => void` | Run full validation then call `callback(values)` |
+| `setValues` | `function` | Bulk-replace all field values |
+| `setErrors` | `function` | Directly set the errors object |
+
+<Tip>
+Pass a `validate` function to get field-level errors as you type. The function receives either a single changed field or the full `values` object and must return an object whose keys match the field names.
+</Tip>
+
+<AccordionGroup>
+  <Accordion title="useForm source code">
+
+```js
+import { useState, useCallback } from "react";
+
+export function useForm(initialValues = {}, validate) {
+    const [values, setValues] = useState(initialValues);
+    const [errors, setErrors] = useState({});
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const onChange = useCallback((name, value) => {
+        setValues((prev) => ({ ...prev, [name]: value }));
+
+        if (validate) {
+            const fieldError = validate({ [name]: value });
+            setErrors((prev) => ({ ...prev, [name]: fieldError[name] || null }));
+        }
+    }, [validate]);
+
+    const reset = useCallback(() => {
+        setValues(initialValues);
+        setErrors({});
+        setIsSubmitting(false);
+    }, [initialValues]);
+
+    const onSubmit = useCallback(async (e, callback) => {
+        if (e) e.preventDefault();
+
+        if (validate) {
+            const validationErrors = validate(values);
+            setErrors(validationErrors);
+            if (Object.values(validationErrors).some(err => err !== null)) return;
+        }
+
+        setIsSubmitting(true);
+        try {
+            await callback(values);
+        } finally {
+            setIsSubmitting(false);
+        }
+    }, [values, validate]);
+
+    return {
+        values,
+        errors,
+        isSubmitting,
+        onChange,
+        reset,
+        onSubmit,
+        setValues,
+        setErrors
+    };
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+**Usage pattern**
+
+```js
+const { values, errors, onChange, onSubmit, isSubmitting } = useForm(
+    { email: "", password: "" },
+    (vals) => ({
+        email: vals.email !== undefined && !vals.email.includes("@") ? "Invalid email" : null,
+        password: vals.password !== undefined && vals.password.length < 6 ? "Too short" : null,
+    })
+);
+
+// In JSX
+<TextField
+    label="Email"
+    value={values.email}
+    onChange={(v) => onChange("email", v)}
+    error={errors.email}
+/>
+<Button onClick={(e) => onSubmit(e, async (vals) => { /* call API */ })}>
+    Submit
+</Button>
+```
+
+---
+
+## useToggle
+
+`useToggle` is a minimal hook for boolean state. It exposes stable `toggle`, `setTrue`, and `setFalse` callbacks that do not change on re-render.
+
+**Signature**
+
+```js
+useToggle(initialValue = false)
+// Returns: [value, toggle, setTrue, setFalse]
+```
+
+<Tip>
+Use `useToggle` instead of `useState(false)` whenever you only need on/off state — the stable callbacks prevent unnecessary child re-renders.
+</Tip>
+
+<AccordionGroup>
+  <Accordion title="useToggle source code">
+
+```js
+import { useState, useCallback } from "react";
+
+export function useToggle(initialValue = false) {
+    const [value, setValue] = useState(initialValue);
+
+    const toggle = useCallback(() => setValue((v) => !v), []);
+    const setTrue = useCallback(() => setValue(true), []);
+    const setFalse = useCallback(() => setValue(false), []);
+
+    return [value, toggle, setTrue, setFalse];
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## useDashboard
+
+`useDashboard` is the composed hook for the dashboard page. It owns all state for authentication, filtering, project selection, and data loading. No dashboard page component manages its own state.
+
+**Signature**
+
+```js
+useDashboard()
+```
+
+**Returns**
+
+| Property | Description |
+|---|---|
+| `token` | Current auth token (default: `"demo-token"`) |
+| `email`, `setEmail` | Login form email field |
+| `pass`, `setPass` | Login form password field |
+| `data` | Raw API response `{ me, stats, projects }` |
+| `setData` | Directly update data (used by logout) |
+| `loading` | `true` while the dashboard fetch is in progress |
+| `err`, `setErr` | Current fetch error |
+| `q`, `setQ` | Search query string |
+| `statusFilter`, `setStatusFilter` | Active filter: `"all"`, `"active"`, or `"paused"` |
+| `selectedId`, `setSelectedId` | ID of the currently selected project |
+| `filteredProjects` | Memoized array — projects filtered by status and search query |
+| `selected` | Memoized single project matching `selectedId` |
+| `load` | Manually re-trigger the dashboard fetch |
+| `onLogin` | Form submit handler for the login screen |
+| `onLogout` | Clears token and data |
+
+`filteredProjects` is computed with `useMemo` and updates only when `data`, `q`, or `statusFilter` change:
+
+```js
+const filteredProjects = useMemo(() => {
+    const items = data?.projects || [];
+    return items
+        .filter((p) => (statusFilter === "all" ? true : p.status === statusFilter))
+        .filter((p) => (q.trim() ? p.name.toLowerCase().includes(q.trim().toLowerCase()) : true));
+}, [data, q, statusFilter]);
+```
+
+<Tip>
+Notice that `useFetch` is called with `autoExecute = !!token`. This means the data fetch only runs when a token exists, preventing an unauthorized request on the login screen.
+</Tip>
+
+<AccordionGroup>
+  <Accordion title="useDashboard source code">
+
+```js
+import { useState, useMemo } from "react";
+import { apiGetDashboard, apiToggleProjectStatus } from "../services/api";
+import { useFetch } from "./useFetch";
+
+export function useDashboard() {
+    const [token, setToken] = useState("demo-token");
+    const [email, setEmail] = useState("admin@demo.com");
+    const [pass, setPass] = useState("123456");
+
+    const [q, setQ] = useState("");
+    const [statusFilter, setStatusFilter] = useState("all");
+    const [selectedId, setSelectedId] = useState(null);
+
+    const {
+        data,
+        loading,
+        error: err,
+        execute: load,
+        setData,
+        setError: setErr
+    } = useFetch(() => apiGetDashboard({ token }), !!token, [token]);
+
+    const filteredProjects = useMemo(() => {
+        const items = data?.projects || [];
+        return items
+            .filter((p) => (statusFilter === "all" ? true : p.status === statusFilter))
+            .filter((p) => (q.trim() ? p.name.toLowerCase().includes(q.trim().toLowerCase()) : true));
+    }, [data, q, statusFilter]);
+
+    const selected = useMemo(() => {
+        if (!data?.projects || !selectedId) return null;
+        return data.projects.find((p) => p.id === selectedId) || null;
+    }, [data, selectedId]);
+
+    function onLogin(e) {
+        e.preventDefault();
+        if (!email.includes("@") || pass.length < 3) {
+            alert("Credenciales inválidas (simulado)");
+            return;
+        }
+        setToken("demo-token");
+    }
+
+    function onLogout() {
+        setToken("");
+        setData(null);
+    }
+
+    return {
+        token,
+        email,
+        setEmail,
+        pass,
+        setPass,
+        data,
+        setData,
+        loading,
+        err,
+        setErr,
+        q,
+        setQ,
+        statusFilter,
+        setStatusFilter,
+        selectedId,
+        setSelectedId,
+        filteredProjects,
+        selected,
+        load,
+        onLogin,
+        onLogout,
+    };
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## useProjectForm
+
+`useProjectForm` manages the project create and edit form. It composes `useForm` for field state and validation, then adds edit-mode tracking and direct API calls.
+
+**Signature**
+
+```js
+useProjectForm(token, onSuccess, setSelectedId)
+```
+
+**Parameters**
+
+| Parameter | Description |
+|---|---|
+| `token` | Auth token passed to API calls |
+| `onSuccess` | Callback invoked with the created or updated project |
+| `setSelectedId` | Used after creation to auto-select the new project |
+
+**Returns**
+
+| Property | Description |
+|---|---|
+| `name`, `setName` | Project name field |
+| `owner`, `setOwner` | Owner field |
+| `budget`, `setBudget` | Budget field (stored as string) |
+| `status`, `setStatus` | Status field (`"active"` or `"paused"`) |
+| `editingId` | ID of the project being edited, or `null` for create mode |
+| `saving` | `true` while the API call is in progress |
+| `nameErr` | Validation error for the name field |
+| `ownerErr` | Validation error for the owner field |
+| `budgetErr` | Validation error for the budget field |
+| `formErr` | First non-null validation error across all fields |
+| `onAction` | Submit handler — creates or updates based on `editingId` |
+| `prepareEdit(project)` | Populate the form with an existing project's data |
+| `cancelEdit()` | Clear edit mode and reset the form |
+
+<Tip>
+Call `prepareEdit(project)` to switch to edit mode. The hook scrolls the page to the form and populates all fields. Call `cancelEdit()` to return to create mode.
+</Tip>
+
+<AccordionGroup>
+  <Accordion title="useProjectForm source code">
+
+```js
+import { useState } from "react";
+import { apiCreateProject, apiUpdateProject } from "../services/api";
+import { useForm } from "./useForm";
+
+export function useProjectForm(token, onProjectCreated, setSelectedId) {
+    const validate = (values) => {
+        const errs = {};
+        if (values.name !== undefined) {
+            errs.name = values.name.trim().length < 3 ? "Minimo 3 caracteres" : null;
+        }
+        if (values.owner !== undefined) {
+            errs.owner = values.owner.trim().length < 2 ? "Owner muy corto" : null;
+        }
+        if (values.budget !== undefined) {
+            errs.budget = isNaN(Number(values.budget)) ? "Debe ser numero" : null;
+        }
+        return errs;
+    };
+
+    const [editingId, setEditingId] = useState(null);
+
+    const {
+        values,
+        errors,
+        isSubmitting: saving,
+        onChange,
+        onSubmit,
+        reset,
+        setValues
+    } = useForm({ name: "", owner: "", budget: "0", status: "active" }, validate);
+
+    const prepareEdit = (project) => {
+        setEditingId(project.id);
+        setValues({
+            name: project.name,
+            owner: project.owner,
+            budget: String(project.budget),
+            status: project.status
+        });
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    };
+
+    const cancelEdit = () => {
+        setEditingId(null);
+        reset();
+    };
+
+    const handleAction = async (formValues) => {
+        if (editingId) {
+            const updated = await apiUpdateProject({
+                token,
+                id: editingId,
+                payload: {
+                    name: formValues.name,
+                    owner: formValues.owner,
+                    budget: Number(formValues.budget),
+                    status: formValues.status
+                },
+            });
+            onProjectCreated(updated);
+            setEditingId(null);
+            reset();
+        } else {
+            const created = await apiCreateProject({
+                token,
+                payload: {
+                    name: formValues.name,
+                    owner: formValues.owner,
+                    budget: Number(formValues.budget),
+                    status: formValues.status
+                },
+            });
+            onProjectCreated(created);
+            setSelectedId(created.id);
+            reset();
+        }
+    };
+
+    return {
+        name: values.name,
+        setName: (val) => onChange("name", val),
+        owner: values.owner,
+        setOwner: (val) => onChange("owner", val),
+        budget: values.budget,
+        setBudget: (val) => onChange("budget", val),
+        status: values.status,
+        setStatus: (val) => onChange("status", val),
+        editingId,
+        saving,
+        formErr: Object.values(errors).find(e => e !== null) || null,
+        nameErr: errors.name,
+        ownerErr: errors.owner,
+        budgetErr: errors.budget,
+        onAction: (e) => onSubmit(e, handleAction),
+        prepareEdit,
+        cancelEdit,
+    };
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## useUsers
+
+`useUsers` provides user data from the external JSONPlaceholder audit API. Unlike `useFetch`, this hook manages its own fetch logic directly because it integrates additional data sources (posts and comments) alongside users.
+
+**Signature**
+
+```js
+useUsers()
+```
+
+**Returns**
+
+| Property | Description |
+|---|---|
+| `users` | Array of user objects from JSONPlaceholder |
+| `posts` | Posts for the currently selected user |
+| `comments` | Comments for the currently selected post |
+| `loading` | `true` while any fetch is in progress |
+| `error` | `{ status, message }` or `null` |
+| `fetchUsers` | Manually trigger a user list reload |
+| `fetchUserPosts(userId)` | Load posts for a specific user |
+| `fetchPostComments(postId)` | Load comments for a specific post |
+| `clearError` | Reset the error state to `null` |
+
+The hook also listens for the `apm:api_status` event. When the event fires with a non-200 code it clears the users array before re-fetching, producing an empty-state render during error simulation.
+
+<AccordionGroup>
+  <Accordion title="useUsers source code">
+
+```js
+import { useState, useCallback, useEffect } from "react";
+import { apiClient } from "../services/apiClient";
+
+export function useUsers() {
+    const [users, setUsers] = useState([]);
+    const [posts, setPosts] = useState([]);
+    const [comments, setComments] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const fetchUsers = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        if (window.SIMULATE_ERROR) setUsers([]);
+        try {
+            const data = await apiClient.getUsers();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            setUsers(data);
+        } catch (err) {
+            setUsers([]);
+            const msg = err.status === 404 ? "Usuario no encontrado" :
+                err.status === 401 ? "Sesión no autorizada" :
+                    (err.message || "Falla de auditoría de red");
+            setError({
+                status: err.status || 500,
+                message: msg
+            });
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        const handleStatus = (e) => {
+            if (e.detail.code !== 200) setUsers([]);
+            fetchUsers();
+        };
+        window.addEventListener("apm:api_status", handleStatus);
+        return () => window.removeEventListener("apm:api_status", handleStatus);
+    }, [fetchUsers]);
+
+    const fetchUserPosts = useCallback(async (userId) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await apiClient.getUserPosts(userId);
+            setPosts(data);
+        } catch (err) {
+            setError({ status: err.status || 500, message: err.message || "Error al cargar posts" });
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    const fetchPostComments = useCallback(async (postId) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await apiClient.getPostComments(postId);
+            setComments(data);
+        } catch (err) {
+            setError({ status: err.status || 500, message: err.message || "Error al cargar comentarios" });
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    return {
+        users,
+        posts,
+        comments,
+        loading,
+        error,
+        fetchUsers,
+        fetchUserPosts,
+        fetchPostComments,
+        clearError: () => setError(null)
+    };
+}
+```
+
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Composing hooks
+
+`useDashboard` shows the primary composition pattern used in APM Enterprise: a page-level hook that composes a lower-level primitive hook to handle the fetch, and adds filtering and navigation logic on top.
+
+```
+DashboardPage
+    └── useDashboard()
+            ├── useFetch(() => apiGetDashboard({ token }), !!token, [token])
+            │       └── apiGetDashboard  →  httpClient.get("/dashboard")
+            ├── useMemo → filteredProjects
+            └── useMemo → selected
+```
+
+The same pattern is used in `useProjectForm`, which composes `useForm` to handle field state and validation, then adds edit-mode tracking and direct `apiCreateProject` / `apiUpdateProject` calls on top.
+
+```
+ProjectsPage
+    └── useProjectForm(token, onSuccess, setSelectedId)
+            └── useForm({ name, owner, budget, status }, validate)
+```
+
+This layered composition keeps each hook focused on a single concern and makes the individual pieces independently testable.
