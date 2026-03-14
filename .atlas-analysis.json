@@ -1,0 +1,103 @@
+{
+  "projectType": "saas",
+  "projectName": "APM Enterprise",
+  "projectDescription": "APM Enterprise is a React-based business management dashboard for tracking projects, KPIs, and user directories with integrated network auditing and error simulation tools.",
+  "theme": "linden",
+  "primaryColor": "#bb9d5a",
+  "lightColor": "#5c442c",
+  "darkColor": "#1d1811",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Core Modules",
+            "pages": [
+              "modules/dashboard",
+              "modules/projects",
+              "modules/users"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/layers",
+              "architecture/data-flow"
+            ]
+          },
+          {
+            "group": "Developer Guide",
+            "pages": [
+              "guides/custom-hooks",
+              "guides/http-client",
+              "guides/error-simulation",
+              "guides/components"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Services",
+            "pages": [
+              "api/http-client",
+              "api/api-service",
+              "api/api-client",
+              "api/mock-server"
+            ]
+          },
+          {
+            "group": "Hooks",
+            "pages": [
+              "api/hooks/use-fetch",
+              "api/hooks/use-form",
+              "api/hooks/use-dashboard",
+              "api/hooks/use-project-form",
+              "api/hooks/use-users"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Dashboard with real-time KPI stats (revenue, new users, churn rate)",
+    "Project management with create, edit, filter, and paginate operations",
+    "User directory with detailed profile inspection and audit trail",
+    "Integrated API engineering panel with error simulation (401, 404, 500)",
+    "Layered architecture with custom hooks separating business logic from UI",
+    "Centralized HTTP client with Bearer token authentication",
+    "Mock server intercepting fetch for local development and demo",
+    "Collapsible sidebar layout with role-based user display"
+  ],
+  "publicApiSurface": [
+    "apiGetDashboard({ token })",
+    "apiCreateProject({ token, payload })",
+    "apiToggleProjectStatus({ token, id })",
+    "apiUpdateProject({ token, id, payload })",
+    "apiClient.getUsers()",
+    "apiClient.getUserPosts(userId)",
+    "apiClient.getPostComments(postId)",
+    "useFetch(fetchFn, autoExecute, deps)",
+    "useForm(initialValues, validate)",
+    "useDashboard()",
+    "useProjectForm(token, onSuccess, setSelectedId)",
+    "useUsers()",
+    "useToggle(initial)",
+    "window.setSimulatedError(code)",
+    "window.SIMULATE_ERROR",
+    "httpClient.get(endpoint, options)",
+    "httpClient.post(endpoint, data, options)",
+    "httpClient.put(endpoint, data, options)",
+    "httpClient.patch(endpoint, data, options)",
+    "httpClient.delete(endpoint, options)"
+  ]
+}
